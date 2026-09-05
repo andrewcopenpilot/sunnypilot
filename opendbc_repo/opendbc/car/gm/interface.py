@@ -166,6 +166,10 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
     if candidate == CAR.CHEVROLET_VOLT:
       ret.minEnableSpeed = 3 * CV.MPH_TO_MS
 
+      if ret.networkLocation == NetworkLocation.gateway and ret.openpilotLongitudinalControl:
+        # Gain-only interceptor trial: retain the 5/35 m/s breakpoints and reduce I by 20%.
+        ret.longitudinalTuning.kiV = [1.92, 1.20]
+
       ret.lateralTuning.pid.kpBP = [0., 40.]
       ret.lateralTuning.pid.kpV = [0., 0.17]
       ret.lateralTuning.pid.kiBP = [0.]
