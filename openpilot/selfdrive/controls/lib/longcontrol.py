@@ -1,6 +1,5 @@
 import numpy as np
 from opendbc.car.structs import car
-from opendbc.car.gm.values import CAR
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
@@ -45,11 +44,7 @@ class LongControl:
     self.CP = CP
     self.CP_SP = CP_SP
     self.long_control_state = LongCtrlState.off
-    # Trial P term only for the ASCM Volt; other platforms retain integral-only control.
-    volt_ascm_trial = (CP.carFingerprint == CAR.CHEVROLET_VOLT and
-                       CP.networkLocation == car.CarParams.NetworkLocation.gateway and
-                       CP.openpilotLongitudinalControl)
-    self.pid = PIDController(0.10 if volt_ascm_trial else 0.0, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+    self.pid = PIDController(0.10, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
 

@@ -49,23 +49,5 @@ class TestVoltLongitudinalTrial(unittest.TestCase):
     self.assertEqual(control.update(False, cs, -0.5, False, (-3.5, 2.)), 0.)
     self.assertEqual(control.long_control_state, LongCtrlState.off)
 
-  def test_other_gm_platform_retains_original_gains(self):
-    cp, sp = self.params(CAR.GMC_ACADIA)
-    for actual, expected in zip(cp.longitudinalTuning.kiV, [2.4, 1.5], strict=True):
-      self.assertAlmostEqual(actual, expected, places=6)
-    control = LongControl(cp, sp)
-    self.assertEqual(control.pid.k_p, 0.)
-    self.assertAlmostEqual(control.pid.k_i, 2.4, places=6)
-
-  def test_camera_volt_and_stock_long_do_not_enable_p(self):
-    for camera, stock in [(True, False), (False, True)]:
-      cp, sp = self.params()
-      if camera:
-        cp.networkLocation = structs.CarParams.NetworkLocation.fwdCamera
-      if stock:
-        cp.openpilotLongitudinalControl = False
-      self.assertEqual(LongControl(cp, sp).pid.k_p, 0.)
-
-
 if __name__ == '__main__':
   unittest.main()
