@@ -87,53 +87,16 @@ class Maneuver:
     return self._active
 
 
+# Probe the Volt's regen-to-additional-braking transition, including release.
+# Repeat each target from the same speed before moving to stronger braking.
 MANEUVERS = [
   Maneuver(
-    "come to stop",
-    [Action([-0.5], [12])],
-    repeat=2,
-    initial_speed=5.,
-  ),
-  Maneuver(
-    "start from stop",
-    [Action([1.5], [6])],
-    repeat=2,
-    initial_speed=0.,
-  ),
-  Maneuver(
-    "creep: alternate between +1m/s^2 and -1m/s^2",
-    [
-      Action([1], [3]), Action([-1], [3]),
-      Action([1], [3]), Action([-1], [3]),
-      Action([1], [3]), Action([-1], [3]),
-    ],
-    repeat=2,
-    initial_speed=0.,
-  ),
-  Maneuver(
-    "brake step response: -1m/s^2 from 20mph",
-    [Action([-1], [3])],
+    f"brake step and release: {accel:g}m/s^2 from 20mph",
+    [Action([accel], [3]), Action([0.], [2])],
     repeat=2,
     initial_speed=20. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "brake step response: -3.5m/s^2 from 20mph",
-    [Action([-3.5], [3])],
-    repeat=2,
-    initial_speed=20. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "gas step response: +1m/s^2 from 20mph",
-    [Action([1], [3])],
-    repeat=2,
-    initial_speed=20. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "gas step response: +2m/s^2 from 20mph",
-    [Action([2], [3])],
-    repeat=2,
-    initial_speed=20. * CV.MPH_TO_MS,
-  ),
+  )
+  for accel in (-0.5, -0.75, -1., -1.25, -1.5)
 ]
 
 
