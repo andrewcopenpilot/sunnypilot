@@ -2,12 +2,8 @@
 import numpy as np
 from dataclasses import dataclass
 
-from openpilot.cereal import messaging
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
-from openpilot.common.params import Params
-from openpilot.common.swaglog import cloudlog
-from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
 
 
 @dataclass
@@ -26,6 +22,7 @@ class Maneuver:
   repeat: int = 0
   initial_speed: float = 0.  # m/s
 
+  _interrupted: bool = False
   _active: bool = False
   _finished: bool = False
   _run_completed: bool = False
@@ -60,6 +57,14 @@ class Maneuver:
     return float(action_accel)
 
   def get_accel(self, v_ego: float, long_active: bool, standstill: bool, cruise_standstill: bool, /) -> float:
+    self._run_completed = False
+    if not long_active:
+      if self._active:
+        self.reset()
+        self._interrupted = True
+      self._ready_cnt = 0
+      return 0.
+
     ready = abs(v_ego - self.initial_speed) < 0.3 and long_active and not cruise_standstill
     if self.initial_speed < 0.01:
       ready = ready and standstill
@@ -67,6 +72,7 @@ class Maneuver:
 
     if self._ready_cnt > (3. / DT_MDL):
       self._active = True
+      self._interrupted = False
 
     if not self._active:
       return min(max(self.initial_speed - v_ego, -2.), 2.)
@@ -77,6 +83,7 @@ class Maneuver:
     self._active = False
     self._action_frames = 0
     self._action_index = 0
+    self._ready_cnt = 0
 
   @property
   def finished(self):
@@ -85,6 +92,76 @@ class Maneuver:
   @property
   def active(self):
     return self._active
+
+
+@dataclass
+class StopManeuver(Maneuver):
+  stop_accel: float = -0.5
+  timeout: float = 20.
+  hold_time: float = 3.
+  _elapsed_frames: int = 0
+  _hold_frames: int = 0
+  _holding: bool = False
+  _failed: bool = False
+  _complete: bool = False
+  _armed: bool = False
+
+  @property
+  def stopping_intent(self):
+    return self._holding or self._failed or self._complete
+
+  def reset(self):
+    super().reset()
+    self._elapsed_frames = 0
+    self._hold_frames = 0
+    self._holding = False
+    self._failed = False
+    self._complete = False
+
+  def get_accel(self, v_ego: float, long_active: bool, standstill: bool, cruise_standstill: bool, /) -> float:
+    self._run_completed = False
+    # Every stop requires driver disengagement before setup; after the hold we
+    # keep stopping intent until takeover, never automatically launch again.
+    if not long_active:
+      if self._complete:
+        self._run_completed = True
+        if self._repeated < self.repeat:
+          self._repeated += 1
+        else:
+          self._finished = True
+      elif self._active or self._failed:
+        self._interrupted = True
+      self.reset()
+      self._armed = True
+      return 0.
+
+    if not self._armed:
+      return 0.
+    if self.stopping_intent:
+      if self._holding and not self._complete and not self._failed:
+        self._elapsed_frames += 1
+        self._hold_frames = self._hold_frames + 1 if standstill and abs(v_ego) < 0.1 else 0
+        if self._hold_frames * DT_MDL >= self.hold_time:
+          self._complete = True
+        elif self._elapsed_frames * DT_MDL >= self.timeout:
+          self._failed = True
+      return self.stop_accel
+
+    if not self._active:
+      ready = abs(v_ego - self.initial_speed) < 0.3 and not cruise_standstill
+      self._ready_cnt = self._ready_cnt + 1 if ready else 0
+      if self._ready_cnt * DT_MDL <= 3.:
+        return min(max(self.initial_speed - v_ego, -2.), 2.)
+      self._active = True
+      self._interrupted = False
+
+    self._elapsed_frames += 1
+    if standstill and abs(v_ego) < 0.1:
+      self._holding = True
+      self._hold_frames = 0
+    elif self._elapsed_frames * DT_MDL >= self.timeout:
+      self._failed = True
+    return self.stop_accel
 
 
 # Probe the Volt's regen-to-additional-braking transition, including release.
@@ -97,10 +174,24 @@ MANEUVERS = [
     initial_speed=20. * CV.MPH_TO_MS,
   )
   for accel in (-0.5, -0.75, -1., -1.25, -1.5)
+] + [
+  StopManeuver(
+    f"stop and hold: {accel:g}m/s^2 from 10mph",
+    [],
+    repeat=1,
+    initial_speed=10. * CV.MPH_TO_MS,
+    stop_accel=accel,
+  )
+  for accel in (-0.5, -0.75, -1.)
 ]
 
 
 def main():
+  from openpilot.cereal import messaging
+  from openpilot.common.params import Params
+  from openpilot.common.swaglog import cloudlog
+  from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
+
   params = Params()
   cloudlog.info("maneuversd is waiting for CarParams")
   params.get("CarParams", block=True)
@@ -110,6 +201,7 @@ def main():
 
   maneuvers = iter(MANEUVERS)
   maneuver = None
+  previous_status = None
 
   while True:
     sm.update()
@@ -128,26 +220,50 @@ def main():
     v_ego = max(sm['carState'].vEgo, 0)
 
     if maneuver is not None:
+      run_number = maneuver._repeated + 1
       accel = maneuver.get_accel(v_ego, sm['carControl'].longActive, sm['carState'].standstill, sm['carState'].cruiseState.standstill)
 
-      if maneuver.active:
+      if isinstance(maneuver, StopManeuver) and maneuver._failed:
+        alert_msg.alertDebug.alertText1 = 'Stop timed out: take control; retry required'
+      elif isinstance(maneuver, StopManeuver) and maneuver._complete:
+        alert_msg.alertDebug.alertText1 = 'Stop complete: take control before next run'
+      elif isinstance(maneuver, StopManeuver) and not maneuver._armed:
+        alert_msg.alertDebug.alertText1 = 'Stop tests: disengage, then engage when ready'
+      elif isinstance(maneuver, StopManeuver) and maneuver._holding:
+        alert_msg.alertDebug.alertText1 = 'Maneuver Active: holding standstill for 3 seconds'
+      elif maneuver._interrupted:
+        alert_msg.alertDebug.alertText1 = 'Run interrupted: restarting from setup'
+      elif maneuver.active:
         alert_msg.alertDebug.alertText1 = f'Maneuver Active: {accel:0.2f} m/s^2'
       else:
         alert_msg.alertDebug.alertText1 = f'Setting up to {maneuver.initial_speed * CV.MS_TO_MPH:0.2f} mph'
-      alert_msg.alertDebug.alertText2 = f'{maneuver.description}'
+      alert_msg.alertDebug.alertText1 += f' (run {run_number}/{maneuver.repeat + 1})'
+      alert_msg.alertDebug.alertText2 = maneuver.description
+      if maneuver._run_completed:
+        cloudlog.info("longitudinal maneuver completed: %s | run %d/%d", maneuver.description, run_number, maneuver.repeat + 1)
     else:
       alert_msg.alertDebug.alertText1 = 'Maneuvers Finished'
 
+    status = None if maneuver is None else (
+      id(maneuver), maneuver._repeated, maneuver.active, maneuver._action_index,
+      maneuver._interrupted, maneuver._run_completed, maneuver.finished,
+      isinstance(maneuver, StopManeuver) and (maneuver._armed, maneuver._holding, maneuver._failed, maneuver._complete),
+    )
+    if status != previous_status:
+      cloudlog.info("longitudinal maneuver: %s | %s", alert_msg.alertDebug.alertText1, alert_msg.alertDebug.alertText2)
+      previous_status = status
     pm.send('alertDebug', alert_msg)
 
     longitudinalPlan.aTarget = accel
-    longitudinalPlan.shouldStop = should_stop(v_ego, accel)
+    stopping_intent = isinstance(maneuver, StopManeuver) and maneuver.stopping_intent
+    longitudinalPlan.shouldStop = stopping_intent or should_stop(v_ego, accel)
 
     longitudinalPlan.allowBrake = True
-    longitudinalPlan.allowThrottle = True
+    longitudinalPlan.allowThrottle = not stopping_intent
     longitudinalPlan.hasLead = True
 
-    longitudinalPlan.speeds = [0.2]  # triggers carControl.cruiseControl.resume in controlsd
+    # Suppress automatic resume throughout stop hold, timeout and takeover wait.
+    longitudinalPlan.speeds = [0.] if stopping_intent else [0.2]
 
     pm.send('longitudinalPlan', plan_send)
 

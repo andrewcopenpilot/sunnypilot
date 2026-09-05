@@ -13,12 +13,36 @@ for two seconds to capture brake release. Zero target acceleration is speed hold
 not a guarantee of zero gas or brake actuation. Between runs, the tool returns to
 20 mph and waits for its existing three-second ready condition.
 
-There are 15 runs and approximately 75 seconds of active maneuver commands, plus
-setup and speed recovery. The sequence replaces the starting, creep and strong
-braking/acceleration tests with measurements around the Volt's braking transition.
-It does not change the longitudinal gains, actuator mapping or stopping logic.
+The same 15 runs (approximately 75 seconds of active commands, plus setup) are
+followed by **six full stops from 10 mph**: **-0.5, -0.75 and -1.0 m/s²**, twice each.
+Each stop continues until both standstill is reported and speed is below 0.1 m/s,
+then maintains stopping intent for **three continuous seconds** at standstill.
+If the car moves during the hold, the hold timer restarts. These tests exercise
+low-speed PID braking, the transition into stopping control, and brake hold.
+The longitudinal gains, actuator mapping and production stopping logic are unchanged.
 
-Record a baseline before changing gains, then repeat the same sequence and road
+Before the first stop test, disengage and take control. When ready on a clear,
+straight section, manually move above the car's minimum engagement speed (3 mph
+on this branch) and engage; the tool sets up at 10 mph and waits three seconds.
+After each stop, wait for **"Stop complete: take control before next run"**, then
+take control and disengage. The tool keeps stopping intent until disengagement;
+it does **not** automatically accelerate out of a completed stop. Manually set up
+and re-engage for the next trial. Disengage after the final hold too, to acknowledge
+completion and reach "Maneuvers Finished."
+
+A stop/hold that has not completed within **20 seconds of braking onset** shows
+**"Stop timed out: take control; retry required"**. It keeps stopping intent and
+suppresses automatic resume until you take control; the failed trial must be retried.
+During any active trial, disengagement discards that attempt and restarts the same
+trial from speed setup on re-engagement. It does not count as a completed run.
+Disengagement during a completed stop hold acknowledges success instead.
+
+Alerts identify the run number and phase. Phase changes and completed trials are
+also written to the log. Keep full rlogs to distinguish completed trials from
+interrupted attempts; the generic HTML report can include interrupted intervals.
+
+Record these added stops with the current gains before changing them, then repeat
+the same sequence and road
 direction for the candidate tune. Note the software commit and approximate charge
 for each route. Keep the full rlogs, including CAN, for torque/pressure and controller
 analysis; the generated report alone does not include all of that feedback.
@@ -37,9 +61,9 @@ analysis; the generated report alone does not include all of that feedback.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 15 runs, including automatic speed recovery to 20 mph between runs. If you need to pause the tests, press "Cancel" on your steering wheel. You can resume the tests by pressing "Resume" on your steering wheel.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 21 successful runs. The first 15 automatically recover to 20 mph between runs; the six stops require driver takeover between runs as described above. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over.
 
-   **Note:** This sequence starts each run at 20 mph. Review the targets above before enabling maneuver mode; it will automatically accelerate back to that speed between runs.
+   **Note:** The first 15 runs start at 20 mph; the final six start at 10 mph and stop completely. Review the setup, takeover and timeout behavior above before enabling maneuver mode.
 
    ![cog-clip-00 01 11 250-00 01 22 250](https://github.com/user-attachments/assets/c312c1cc-76e8-46e1-a05e-bb9dfb58994f)
 
