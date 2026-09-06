@@ -210,6 +210,19 @@ MANEUVERS = [
     stop_accel=-0.75,
   ),
 ]
+# Regen-only characterisation (run with /data/params/d/VoltRegenOnlyTest present, which also makes
+# the car controller send zero friction brake). The -2 target only saturates the regen request; the
+# car decelerates at whatever regen alone delivers, so from 40 mph the hold takes ~20 s and ~200 m.
+REGEN_ONLY_TEST_FLAG = "/data/params/d/VoltRegenOnlyTest"
+REGEN_ONLY_MANEUVERS = [
+  Maneuver(
+    "REGEN ONLY (friction disabled): -2m/s^2 request from 40mph, 25 s hold",
+    [Action([-2.], [25]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=40. * CV.MPH_TO_MS,
+  ),
+]
+
 
 def main():
   from openpilot.cereal import messaging
@@ -224,7 +237,10 @@ def main():
   sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'selfdriveState', 'modelV2'], poll='modelV2')
   pm = messaging.PubMaster(['longitudinalPlan', 'longitudinalPlanSP', 'driverAssistance', 'alertDebug'])
 
-  maneuvers = iter(MANEUVERS)
+  import os
+  regen_only = os.path.isfile(REGEN_ONLY_TEST_FLAG)
+  cloudlog.info("maneuversd: %s", "REGEN-ONLY test list (friction brake disabled)" if regen_only else "standard suite")
+  maneuvers = iter(REGEN_ONLY_MANEUVERS if regen_only else MANEUVERS)
   maneuver = None
   previous_status = None
 

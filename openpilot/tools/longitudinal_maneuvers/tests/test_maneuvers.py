@@ -1,6 +1,6 @@
 import unittest
 
-from openpilot.tools.longitudinal_maneuvers.maneuversd import Action, Maneuver, StopManeuver, MANEUVERS, DT_MDL
+from openpilot.tools.longitudinal_maneuvers.maneuversd import Action, Maneuver, StopManeuver, MANEUVERS, REGEN_ONLY_MANEUVERS, DT_MDL
 
 
 class TestManeuvers(unittest.TestCase):
@@ -35,6 +35,13 @@ class TestManeuvers(unittest.TestCase):
           break
       self.assertTrue(m.finished)
       self.assertEqual(completed, template.repeat + 1)
+
+  def test_regen_only_list(self):
+    self.assertEqual(sum(m.repeat + 1 for m in REGEN_ONLY_MANEUVERS), 2)
+    m = REGEN_ONLY_MANEUVERS[0]
+    self.assertEqual(m.actions[0].accel_bp, [-2.])
+    self.assertEqual(round(m.initial_speed / 0.44704), 40)
+    self.assertFalse(isinstance(m, StopManeuver))
 
   def test_ramp_and_sweep_shapes(self):
     def copy(template):
