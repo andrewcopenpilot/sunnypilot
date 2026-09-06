@@ -47,11 +47,13 @@ class CarControllerParams:
   BRAKE_NM_PER_COUNT = 5.2            # Nm / count above the dead band
   NM_PER_ACCEL = 536.                 # Nm per m/s^2
 
-  # Regen actually delivered through openpilot's GasRegenCmd path (0x0D3 axle torque with a -650 Nm
-  # request and no friction command), near-full charge. It fades out below ~1.5 m/s and never
-  # reaches the -650 request; the regen/friction breakpoint follows this curve.
-  MAX_REGEN_TORQUE_BP = [1.25, 2.25, 3.5, 7., 9., 17.]   # m/s
-  MAX_REGEN_TORQUE_V = [0., 141., 290., 414., 430., 506.]   # Nm
+  # Regen actually delivered through openpilot's GasRegenCmd path, measured with friction disabled
+  # (2026-09-06, -650 Nm request, near-full charge ~390 V). Below ~9 m/s it is a torque limit that does
+  # not move with charge (mid-SOC drives match); above ~10 m/s it falls as 1/v because the pack accepts
+  # only ~15 kW near full (mid SOC delivered -536 Nm / 31 kW at 20 m/s), so the high-speed points are a
+  # full-charge curve and conservative at lower charge. The regen/friction breakpoint follows this curve.
+  MAX_REGEN_TORQUE_BP = [1.25, 2.25, 3.5, 7., 9., 13., 17.]   # m/s
+  MAX_REGEN_TORQUE_V = [0., 150., 280., 396., 400., 330., 295.]   # Nm
 
   def __init__(self, CP):
     # Gas/brake lookups

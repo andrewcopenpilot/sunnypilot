@@ -16,12 +16,6 @@ CAMERA_CANCEL_DELAY_FRAMES = 10
 # Enforce a minimum interval between steering messages to avoid a fault
 MIN_STEER_MSG_INTERVAL_MS = 15
 
-# TEMPORARY TEST COMMIT (2017 Volt POC): friction brakes are disabled so the ACC regen path can be
-# characterised alone with the regen-only maneuver in tools/longitudinal_maneuvers. Nothing will stop the
-# car through openpilot while this is True; the brake pedal still disengages. Revert this commit before
-# any other driving.
-FRICTION_BRAKES_DISABLED_FOR_REGEN_TEST = True
-
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -102,8 +96,6 @@ class CarController(CarControllerBase):
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:
             self.apply_gas = self.params.INACTIVE_REGEN
-          if FRICTION_BRAKES_DISABLED_FOR_REGEN_TEST:
-            self.apply_brake = 0
 
         idx = (self.frame // 4) % 4
 

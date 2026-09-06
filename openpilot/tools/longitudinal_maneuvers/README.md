@@ -49,16 +49,12 @@ analysis; the generated report alone does not include all of that feedback.
 Record the software commit and the pack voltage at rest (or state of charge) for
 each route, and keep the same road direction when comparing tunes.
 
-## TEMPORARY: regen-only characterisation commit
+## Regen-only characterisation (historical)
 
-In this commit the GM car controller sends **zero friction brake** whatever openpilot asks for, and the
-maneuver list is a two-run regen-only test: a -2 m/s² request from 40 mph held for 25 s, then release.
-The request saturates regen; the car slows only as fast as regen allows (roughly -0.8 m/s² fading to
-nothing near 1.5 m/s), so allow about 200 m of clear road per run and expect a slow finish. **Your brake
-pedal disengages as normal.** Nothing will stop the car through the tool. Do not drive this commit for
-anything else; revert it (re-enable friction, restore STANDARD_MANEUVERS) once the data is collected.
-
-Read the result as delivered axle torque (0x0D3) against speed with the request (0x2CB) held at -650 Nm.
+`REGEN_ONLY_MANEUVERS` in maneuversd.py is a two-run test (a -2 m/s² request from 40 mph held 25 s)
+that is only meaningful with friction brakes disabled in the GM car controller. It was run once on
+2026-09-06 (commit e8d3546715) to measure what openpilot's regen request alone delivers; the result is
+the `MAX_REGEN_TORQUE` curve in opendbc/car/gm/values.py. It is not part of the standard suite.
 
 ## Instructions
 
