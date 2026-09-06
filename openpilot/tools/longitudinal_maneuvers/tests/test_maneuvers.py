@@ -1,6 +1,6 @@
 import unittest
 
-from openpilot.tools.longitudinal_maneuvers.maneuversd import Action, Maneuver, StopManeuver, MANEUVERS, REGEN_ONLY_MANEUVERS, DT_MDL
+from openpilot.tools.longitudinal_maneuvers.maneuversd import Action, Maneuver, StopManeuver, MANEUVERS, STANDARD_MANEUVERS, REGEN_ONLY_MANEUVERS, DT_MDL
 
 
 class TestManeuvers(unittest.TestCase):
@@ -19,9 +19,9 @@ class TestManeuvers(unittest.TestCase):
     self.assertTrue(m._complete)
 
   def test_tuning_suite_sequence(self):
-    steps = [m for m in MANEUVERS if not isinstance(m, StopManeuver)]
-    stops = [m for m in MANEUVERS if isinstance(m, StopManeuver)]
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 16)
+    steps = [m for m in STANDARD_MANEUVERS if not isinstance(m, StopManeuver)]
+    stops = [m for m in STANDARD_MANEUVERS if isinstance(m, StopManeuver)]
+    self.assertEqual(sum(m.repeat + 1 for m in STANDARD_MANEUVERS), 16)
     self.assertEqual([m.actions[0].accel_bp for m in steps[:3]], [[-0.75], [-1.25], [-2.]])
     self.assertEqual([round(m.initial_speed / 0.44704) for m in steps], [20, 20, 20, 20, 40, 40, 40])
     self.assertEqual([m.stop_accel for m in stops], [-0.75])
@@ -42,17 +42,18 @@ class TestManeuvers(unittest.TestCase):
     self.assertEqual(m.actions[0].accel_bp, [-2.])
     self.assertEqual(round(m.initial_speed / 0.44704), 40)
     self.assertFalse(isinstance(m, StopManeuver))
+    self.assertIs(MANEUVERS, REGEN_ONLY_MANEUVERS)  # TEMPORARY test commit
 
   def test_ramp_and_sweep_shapes(self):
     def copy(template):
       return Maneuver(template.description, template.actions, repeat=template.repeat, initial_speed=template.initial_speed)
-    ramp = copy([m for m in MANEUVERS if 'ramp' in m.description][0])
+    ramp = copy([m for m in STANDARD_MANEUVERS if 'ramp' in m.description][0])
     self.start(ramp)  # the activating call already consumed frame 0
     accels = [ramp.get_accel(ramp.initial_speed, True, False, False) for _ in range(int(3. / DT_MDL) - 1)]
     self.assertLess(abs(accels[0]), 0.1)
     self.assertAlmostEqual(accels[-1], -1.5, places=1)
     self.assertTrue(all(b <= a + 1e-9 for a, b in zip(accels, accels[1:])))
-    sweep = copy([m for m in MANEUVERS if 'sweep' in m.description][0])
+    sweep = copy([m for m in STANDARD_MANEUVERS if 'sweep' in m.description][0])
     self.start(sweep)
     accels = [sweep.get_accel(sweep.initial_speed, True, False, False) for _ in range(int(10. / DT_MDL) - 1)]
     self.assertAlmostEqual(accels[-1], -2.5, places=1)
@@ -60,7 +61,7 @@ class TestManeuvers(unittest.TestCase):
 
   def test_stops_with_simulated_vehicle(self):
     completed = 0
-    for template in [m for m in MANEUVERS if isinstance(m, StopManeuver)]:
+    for template in [m for m in STANDARD_MANEUVERS if isinstance(m, StopManeuver)]:
       m = StopManeuver(template.description, [], repeat=template.repeat,
                        initial_speed=template.initial_speed, stop_accel=template.stop_accel)
       for _ in range(m.repeat + 1):
