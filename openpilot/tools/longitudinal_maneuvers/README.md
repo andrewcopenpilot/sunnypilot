@@ -49,27 +49,16 @@ analysis; the generated report alone does not include all of that feedback.
 Record the software commit and the pack voltage at rest (or state of charge) for
 each route, and keep the same road direction when comparing tunes.
 
-## Regen-only characterisation (optional)
+## TEMPORARY: regen-only characterisation commit
 
-To measure what the ACC regen path alone delivers versus speed, create the flag file on the device:
+In this commit the GM car controller sends **zero friction brake** whatever openpilot asks for, and the
+maneuver list is a two-run regen-only test: a -2 m/s² request from 40 mph held for 25 s, then release.
+The request saturates regen; the car slows only as fast as regen allows (roughly -0.8 m/s² fading to
+nothing near 1.5 m/s), so allow about 200 m of clear road per run and expect a slow finish. **Your brake
+pedal disengages as normal.** Nothing will stop the car through the tool. Do not drive this commit for
+anything else; revert it (re-enable friction, restore STANDARD_MANEUVERS) once the data is collected.
 
-```sh
-echo -n 1 > /data/params/d/VoltRegenOnlyTest
-```
-
-While that file exists, the car controller sends **zero friction brake** whatever openpilot asks for,
-and the maneuver daemon runs a two-run list instead of the suite: a -2 m/s² request from 40 mph held
-for 25 s, then release. The request saturates regen; the car slows only as fast as regen allows
-(roughly -0.8 m/s² fading to nothing near 1.5 m/s), so allow about 200 m of clear road per run and
-expect a slow finish. **Your brake pedal disengages as normal.** Remove the flag before any other
-driving or the stop tests, since nothing will stop the car through the tool:
-
-```sh
-rm /data/params/d/VoltRegenOnlyTest
-```
-
-The flag is re-read once a second, so no restart is needed to toggle it. Read the result as delivered
-axle torque (0x0D3) against speed with the request (0x2CB) held at -650 Nm.
+Read the result as delivered axle torque (0x0D3) against speed with the request (0x2CB) held at -650 Nm.
 
 ## Instructions
 

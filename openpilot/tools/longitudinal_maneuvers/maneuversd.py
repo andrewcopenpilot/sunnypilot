@@ -169,7 +169,7 @@ class StopManeuver(Maneuver):
 # regen power cap at high charge, the ramp is a planner-shaped request, and one
 # stop level exercises the stopping transition.
 STEP_HOLD = 5.  # seconds; steady-state metrics are taken after the transient
-MANEUVERS = [
+STANDARD_MANEUVERS = [
   Maneuver(
     f"brake step and release: {accel:g}m/s^2 from 20mph",
     [Action([accel], [STEP_HOLD]), Action([0.], [2])],
@@ -210,10 +210,9 @@ MANEUVERS = [
     stop_accel=-0.75,
   ),
 ]
-# Regen-only characterisation (run with /data/params/d/VoltRegenOnlyTest present, which also makes
-# the car controller send zero friction brake). The -2 target only saturates the regen request; the
-# car decelerates at whatever regen alone delivers, so from 40 mph the hold takes ~20 s and ~200 m.
-REGEN_ONLY_TEST_FLAG = "/data/params/d/VoltRegenOnlyTest"
+# Regen-only characterisation, paired with the friction-brake disable in the GM car controller in this
+# TEMPORARY commit. The -2 target only saturates the regen request; the car decelerates at whatever regen
+# alone delivers, so from 40 mph the hold takes ~20 s and ~200 m.
 REGEN_ONLY_MANEUVERS = [
   Maneuver(
     "REGEN ONLY (friction disabled): -2m/s^2 request from 40mph, 25 s hold",
@@ -222,6 +221,10 @@ REGEN_ONLY_MANEUVERS = [
     initial_speed=40. * CV.MPH_TO_MS,
   ),
 ]
+
+# TEMPORARY: the regen-only list is active. Revert to STANDARD_MANEUVERS together with re-enabling
+# friction brakes in opendbc/car/gm/carcontroller.py.
+MANEUVERS = REGEN_ONLY_MANEUVERS
 
 
 def main():
@@ -237,10 +240,7 @@ def main():
   sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'selfdriveState', 'modelV2'], poll='modelV2')
   pm = messaging.PubMaster(['longitudinalPlan', 'longitudinalPlanSP', 'driverAssistance', 'alertDebug'])
 
-  import os
-  regen_only = os.path.isfile(REGEN_ONLY_TEST_FLAG)
-  cloudlog.info("maneuversd: %s", "REGEN-ONLY test list (friction brake disabled)" if regen_only else "standard suite")
-  maneuvers = iter(REGEN_ONLY_MANEUVERS if regen_only else MANEUVERS)
+  maneuvers = iter(MANEUVERS)
   maneuver = None
   previous_status = None
 
