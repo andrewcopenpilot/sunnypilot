@@ -4,22 +4,27 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 <details><summary>Sample snapshot of a report.</summary><img width="600px" src="https://github.com/user-attachments/assets/d18d0c7d-2bde-44c1-8e86-1741ed442ad8"></details>
 
-## Volt braking comparison sequence
+## Volt tuning suite
 
-This branch runs five braking targets from 20 mph (8.94 m/s), in order:
-**-0.5, -0.75, -1.0, -1.25 and -1.5 m/s²**. Each target is repeated three times.
-Each run holds the braking target for three seconds, then requests zero acceleration
-for two seconds to capture brake release. Zero target acceleration is speed holding,
-not a guarantee of zero gas or brake actuation. Between runs, the tool returns to
-20 mph and waits for its existing three-second ready condition.
+This branch runs a 16-run suite designed to score a longitudinal tune in one session:
 
-The same 15 runs (approximately 75 seconds of active commands, plus setup) are
-followed by **six full stops from 10 mph**: **-0.5, -0.75 and -1.0 m/s²**, twice each.
-Each stop continues until both standstill is reported and speed is below 0.1 m/s,
-then maintains stopping intent for **three continuous seconds** at standstill.
-If the car moves during the hold, the hold timer restarts. These tests exercise
-low-speed PID braking, the transition into stopping control, and brake hold.
-The longitudinal gains, actuator mapping and production stopping logic are unchanged.
+| Runs | Setup speed | Command | What it measures |
+|---|---|---|---|
+| 2 each | 20 mph | -0.75, -1.25, -2.0 m/s² held 5 s, then 0 for 2 s | regen-only tracking, the regen-to-friction hand-off, friction delivery; steady state after the transient; brake release |
+| 2 | 20 mph | ramp 0.5 m/s³ down to -1.5, hold 2 s, then 0 | a planner-shaped request; separates actuator delay from gain |
+| 2 | 30 mph | sweep 0 to -2.5 m/s² over 10 s, then 0 | one continuous map of command vs delivered torque: dead band, friction gain, regen saturation |
+| 2 | 40 mph | -1.0 held 4 s, then 0 | regen at the breakpoint where the pack power cap binds at high charge |
+| 2 | 40 mph | -1.5 held 3 s, then -0.5 held 3 s, then 0 | the same plus a partial release (integrator unwind) |
+| 2 | 10 mph | stop at -0.75 to standstill, hold 3 s | stopping transition and brake hold (see stop-test procedure below) |
+
+Zero target acceleration is speed holding, not a guarantee of zero gas or brake actuation.
+Between runs the tool returns to the setup speed and waits for its three-second ready
+condition. The 30 and 40 mph runs need more road; the sweep from 30 mph covers roughly
+120 m of braking.
+
+The two stops from 10 mph behave as before: each continues until standstill is reported
+and speed is below 0.1 m/s, then maintains stopping intent for three continuous seconds.
+If the car moves during the hold, the hold timer restarts.
 
 Before the first stop test, disengage and take control. When ready on a clear,
 straight section, manually move above the car's minimum engagement speed (3 mph
@@ -38,14 +43,11 @@ trial from speed setup on re-engagement. It does not count as a completed run.
 Disengagement during a completed stop hold acknowledges success instead.
 
 Alerts identify the run number and phase. Phase changes and completed trials are
-also written to the log. Keep full rlogs to distinguish completed trials from
-interrupted attempts; the generic HTML report can include interrupted intervals.
-
-Record these added stops with the current gains before changing them, then repeat
-the same sequence and road
-direction for the candidate tune. Note the software commit and approximate charge
-for each route. Keep the full rlogs, including CAN, for torque/pressure and controller
+also written to the log. Keep full rlogs, including CAN, for torque and controller
 analysis; the generated report alone does not include all of that feedback.
+
+Record the software commit and the pack voltage at rest (or state of charge) for
+each route, and keep the same road direction when comparing tunes.
 
 ## Instructions
 
@@ -61,9 +63,9 @@ analysis; the generated report alone does not include all of that feedback.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 21 successful runs. The first 15 automatically recover to 20 mph between runs; the six stops require driver takeover between runs as described above. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 16 successful runs. The first 14 automatically recover to their setup speed between runs; the two stops require driver takeover between runs as described above. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over.
 
-   **Note:** The first 15 runs start at 20 mph; the final six start at 10 mph and stop completely. Review the setup, takeover and timeout behavior above before enabling maneuver mode.
+   **Note:** The step, ramp and sweep runs start at 20, 30 or 40 mph; the final two start at 10 mph and stop completely. Review the setup, takeover and timeout behavior above before enabling maneuver mode.
 
    ![cog-clip-00 01 11 250-00 01 22 250](https://github.com/user-attachments/assets/c312c1cc-76e8-46e1-a05e-bb9dfb58994f)
 

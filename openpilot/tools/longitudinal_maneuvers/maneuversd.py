@@ -164,27 +164,52 @@ class StopManeuver(Maneuver):
     return self.stop_accel
 
 
-# Probe the Volt's regen-to-additional-braking transition, including release.
-# Repeat each target from the same speed before moving to stronger braking.
+# Volt tuning suite (16 runs). Each step holds long enough to measure steady state,
+# the sweep maps the actuator path continuously, the 40 mph runs sit above the
+# regen power cap at high charge, the ramp is a planner-shaped request, and one
+# stop level exercises the stopping transition.
+STEP_HOLD = 5.  # seconds; steady-state metrics are taken after the transient
 MANEUVERS = [
   Maneuver(
     f"brake step and release: {accel:g}m/s^2 from 20mph",
-    [Action([accel], [3]), Action([0.], [2])],
-    repeat=2,
+    [Action([accel], [STEP_HOLD]), Action([0.], [2])],
+    repeat=1,
     initial_speed=20. * CV.MPH_TO_MS,
   )
-  for accel in (-0.5, -0.75, -1., -1.25, -1.5)
+  for accel in (-0.75, -1.25, -2.)
 ] + [
+  Maneuver(
+    "brake ramp and release: 0.5m/s^3 to -1.5m/s^2 from 20mph",
+    [Action([0., -1.5], [0., 3.]), Action([-1.5], [2]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=20. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake sweep and release: 0 to -2.5m/s^2 over 10s from 30mph",
+    [Action([0., -2.5], [0., 10.]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=30. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake step and release: -1m/s^2 from 40mph",
+    [Action([-1.], [4]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=40. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake step and partial release: -1.5 then -0.5m/s^2 from 40mph",
+    [Action([-1.5], [3]), Action([-0.5], [3]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=40. * CV.MPH_TO_MS,
+  ),
   StopManeuver(
-    f"stop and hold: {accel:g}m/s^2 from 10mph",
+    "stop and hold: -0.75m/s^2 from 10mph",
     [],
     repeat=1,
     initial_speed=10. * CV.MPH_TO_MS,
-    stop_accel=accel,
-  )
-  for accel in (-0.5, -0.75, -1.)
+    stop_accel=-0.75,
+  ),
 ]
-
 
 def main():
   from openpilot.cereal import messaging
