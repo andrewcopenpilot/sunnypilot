@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, structs
@@ -16,6 +17,11 @@ CAMERA_CANCEL_DELAY_FRAMES = 10
 # Enforce a minimum interval between steering messages to avoid a fault
 MIN_STEER_MSG_INTERVAL_MS = 15
 
+# POC test hook (2017 Volt): while this file exists, the friction brake command is forced to 0 so the
+# regen path can be characterised alone. Toggle with `touch`/`rm`; re-read once a second.
+#   echo -n 1 > /data/params/d/VoltRegenOnlyTest
+REGEN_ONLY_TEST_FLAG = "/data/params/d/VoltRegenOnlyTest"
+
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -32,6 +38,7 @@ class CarController(CarControllerBase):
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    self.regen_only_test = os.path.isfile(REGEN_ONLY_TEST_FLAG)
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint][Bus.pt])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
@@ -82,6 +89,8 @@ class CarController(CarControllerBase):
       can_sends.append(gmcan.create_steering_control(self.packer_pt, CanBus.OBSTACLE, apply_torque, idx, CC.latActive))
 
     if self.CP.openpilotLongitudinalControl:
+      if self.frame % 100 == 0:
+        self.regen_only_test = os.path.isfile(REGEN_ONLY_TEST_FLAG)
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
@@ -96,6 +105,8 @@ class CarController(CarControllerBase):
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:
             self.apply_gas = self.params.INACTIVE_REGEN
+          if self.regen_only_test:
+            self.apply_brake = 0
 
         idx = (self.frame // 4) % 4
 
