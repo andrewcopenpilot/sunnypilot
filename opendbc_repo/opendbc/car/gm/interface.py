@@ -146,7 +146,7 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
 
       # Tuning (POC, 2017 Volt ASCM interceptor). Identified plant: friction delay ~0.25 s,
-      # regen rise ~0.2 s, aEgo lag ~0.15 s. Simulated on it, kp 0.3 (longcontrol.py, the
+      # regen rise ~0.2 s, aEgo lag ~0.15 s. Simulated on it, kp 0.2-0.3 (longcontrol.py, the
       # schema has no kp field) with ki ~1.0-1.5 removed the 2-3 s limit cycle seen with
       # kp 0 / ki 2.4. ki keeps the 5/35 m/s taper.
       ret.longitudinalTuning.kiV = [1.2, 0.8]

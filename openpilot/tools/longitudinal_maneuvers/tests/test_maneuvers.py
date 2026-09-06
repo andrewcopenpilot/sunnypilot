@@ -23,7 +23,7 @@ class TestManeuvers(unittest.TestCase):
     stops = [m for m in MANEUVERS if isinstance(m, StopManeuver)]
     self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 16)
     self.assertEqual([m.actions[0].accel_bp for m in steps[:3]], [[-0.75], [-1.25], [-2.]])
-    self.assertEqual([round(m.initial_speed / 0.44704) for m in steps], [20, 20, 20, 20, 30, 40, 40])
+    self.assertEqual([round(m.initial_speed / 0.44704) for m in steps], [20, 20, 20, 20, 40, 40, 40])
     self.assertEqual([m.stop_accel for m in stops], [-0.75])
     for template in steps:
       m = Maneuver(template.description, template.actions, repeat=template.repeat, initial_speed=template.initial_speed)

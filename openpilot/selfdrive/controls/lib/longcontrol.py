@@ -6,7 +6,9 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
-LONG_KP = 0.3  # POC, 2017 Volt ASCM interceptor; the CarParams schema has no kp field. See opendbc gm/interface.py.
+LONG_KP = 0.2  # POC, 2017 Volt ASCM interceptor; the CarParams schema has no kp field. See opendbc gm/interface.py.
+# 0.3 on 2026-09-06: integrator share 0.16, -1.25 step overshoot 0.41; friction steps still dip ~1 m/s^2 past target
+# in the first 0.7 s (actuator delay), so trying 0.2 to trade a little tracking for less kick into the delay.
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 

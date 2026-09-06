@@ -12,15 +12,15 @@ This branch runs a 16-run suite designed to score a longitudinal tune in one ses
 |---|---|---|---|
 | 2 each | 20 mph | -0.75, -1.25, -2.0 m/s² held 5 s, then 0 for 2 s | regen-only tracking, the regen-to-friction hand-off, friction delivery; steady state after the transient; brake release |
 | 2 | 20 mph | ramp 0.5 m/s³ down to -1.5, hold 2 s, then 0 | a planner-shaped request; separates actuator delay from gain |
-| 2 | 30 mph | sweep 0 to -2.5 m/s² over 10 s, then 0 | one continuous map of command vs delivered torque: dead band, friction gain, regen saturation |
+| 2 | 40 mph | sweep 0 to -2.5 m/s² over 10 s, then 0 | one continuous map of command vs delivered torque: dead band, friction gain, regen saturation |
 | 2 | 40 mph | -1.0 held 4 s, then 0 | regen at the breakpoint where the pack power cap binds at high charge |
 | 2 | 40 mph | -1.5 held 3 s, then -0.5 held 3 s, then 0 | the same plus a partial release (integrator unwind) |
 | 2 | 10 mph | stop at -0.75 to standstill, hold 3 s | stopping transition and brake hold (see stop-test procedure below) |
 
 Zero target acceleration is speed holding, not a guarantee of zero gas or brake actuation.
 Between runs the tool returns to the setup speed and waits for its three-second ready
-condition. The 30 and 40 mph runs need more road; the sweep from 30 mph covers roughly
-120 m of braking.
+condition. The 40 mph runs need more road; the sweep covers roughly 180 m of braking and ends
+near 12 mph so the tool can recover to the next setup speed on its own.
 
 The two stops from 10 mph behave as before: each continues until standstill is reported
 and speed is below 0.1 m/s, then maintains stopping intent for three continuous seconds.
@@ -65,7 +65,7 @@ each route, and keep the same road direction when comparing tunes.
 
 5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 16 successful runs. The first 14 automatically recover to their setup speed between runs; the two stops require driver takeover between runs as described above. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over.
 
-   **Note:** The step, ramp and sweep runs start at 20, 30 or 40 mph; the final two start at 10 mph and stop completely. Review the setup, takeover and timeout behavior above before enabling maneuver mode.
+   **Note:** The step, ramp and sweep runs start at 20 or 40 mph; the final two start at 10 mph and stop completely. Review the setup, takeover and timeout behavior above before enabling maneuver mode.
 
    ![cog-clip-00 01 11 250-00 01 22 250](https://github.com/user-attachments/assets/c312c1cc-76e8-46e1-a05e-bb9dfb58994f)
 
