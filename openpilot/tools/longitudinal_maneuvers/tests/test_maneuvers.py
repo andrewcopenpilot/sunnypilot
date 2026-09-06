@@ -18,25 +18,42 @@ class TestManeuvers(unittest.TestCase):
       self.assertLess(m.get_accel(0., True, True, False), 0.)
     self.assertTrue(m._complete)
 
-  def test_original_sequence_and_stop_targets(self):
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS[:5]), 15)
-    self.assertEqual([m.actions[0].accel_bp for m in MANEUVERS[:5]], [[-0.5], [-0.75], [-1.], [-1.25], [-1.5]])
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS[5:]), 6)
-    self.assertEqual([m.stop_accel for m in MANEUVERS[5:]], [-0.5, -0.75, -1.])
-    for template in MANEUVERS[:5]:
-      m = Maneuver(template.description, template.actions, repeat=2, initial_speed=template.initial_speed)
+  def test_tuning_suite_sequence(self):
+    steps = [m for m in MANEUVERS if not isinstance(m, StopManeuver)]
+    stops = [m for m in MANEUVERS if isinstance(m, StopManeuver)]
+    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 16)
+    self.assertEqual([m.actions[0].accel_bp for m in steps[:3]], [[-0.75], [-1.25], [-2.]])
+    self.assertEqual([round(m.initial_speed / 0.44704) for m in steps], [20, 20, 20, 20, 30, 40, 40])
+    self.assertEqual([m.stop_accel for m in stops], [-0.75])
+    for template in steps:
+      m = Maneuver(template.description, template.actions, repeat=template.repeat, initial_speed=template.initial_speed)
       completed = 0
-      for _ in range(1000):
+      for _ in range(3000):
         m.get_accel(m.initial_speed, True, False, False)
         completed += m._run_completed
         if m.finished:
           break
       self.assertTrue(m.finished)
-      self.assertEqual(completed, 3)
+      self.assertEqual(completed, template.repeat + 1)
 
-  def test_all_six_stops_with_simulated_vehicle(self):
+  def test_ramp_and_sweep_shapes(self):
+    def copy(template):
+      return Maneuver(template.description, template.actions, repeat=template.repeat, initial_speed=template.initial_speed)
+    ramp = copy([m for m in MANEUVERS if 'ramp' in m.description][0])
+    self.start(ramp)  # the activating call already consumed frame 0
+    accels = [ramp.get_accel(ramp.initial_speed, True, False, False) for _ in range(int(3. / DT_MDL) - 1)]
+    self.assertLess(abs(accels[0]), 0.1)
+    self.assertAlmostEqual(accels[-1], -1.5, places=1)
+    self.assertTrue(all(b <= a + 1e-9 for a, b in zip(accels, accels[1:])))
+    sweep = copy([m for m in MANEUVERS if 'sweep' in m.description][0])
+    self.start(sweep)
+    accels = [sweep.get_accel(sweep.initial_speed, True, False, False) for _ in range(int(10. / DT_MDL) - 1)]
+    self.assertAlmostEqual(accels[-1], -2.5, places=1)
+    self.assertTrue(all(b <= a + 1e-9 for a, b in zip(accels, accels[1:])))
+
+  def test_stops_with_simulated_vehicle(self):
     completed = 0
-    for template in MANEUVERS[5:]:
+    for template in [m for m in MANEUVERS if isinstance(m, StopManeuver)]:
       m = StopManeuver(template.description, [], repeat=template.repeat,
                        initial_speed=template.initial_speed, stop_accel=template.stop_accel)
       for _ in range(m.repeat + 1):
@@ -55,7 +72,7 @@ class TestManeuvers(unittest.TestCase):
         m.get_accel(0., False, True, True)
         completed += m._run_completed
       self.assertTrue(m.finished)
-    self.assertEqual(completed, 6)
+    self.assertEqual(completed, 2)
 
   def test_interrupted_step_restarts_whole_run(self):
     m = Maneuver('step', [Action([-1.], [3]), Action([0.], [2])], repeat=2, initial_speed=8.94)

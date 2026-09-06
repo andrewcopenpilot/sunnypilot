@@ -6,6 +6,7 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
+LONG_KP = 0.3  # POC, 2017 Volt ASCM interceptor; the CarParams schema has no kp field. See opendbc gm/interface.py.
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -44,7 +45,8 @@ class LongControl:
     self.CP = CP
     self.CP_SP = CP_SP
     self.long_control_state = LongCtrlState.off
-    self.pid = PIDController(0.10, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+    # Effective kp is recoverable from the logs as controlsState.upAccelCmd / (aTarget - aEgo).
+    self.pid = PIDController(LONG_KP, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
 

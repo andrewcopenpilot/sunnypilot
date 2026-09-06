@@ -34,6 +34,14 @@ class CarControllerParams:
   ACCEL_MAX = 2.  # m/s^2
   ACCEL_MIN = -4.  # m/s^2
 
+  # POC (2017 Volt, ASCM interceptor). Friction-brake path fitted from logs (GDS2
+  # TotalBrakeTorque vs FrictionBrakeCmd, cross-checked by IMU on four drives): the EBCM
+  # produces no torque below ~80 counts, then ~5.7 Nm per count with ~0.25 s delay.
+  # 1 m/s^2 at the wheels ~536 Nm (1606 kg, r 0.334 m).
+  BRAKE_DEADBAND = 80.       # counts
+  BRAKE_NM_PER_COUNT = 5.7   # Nm / count above the dead band
+  NM_PER_ACCEL = 536.        # Nm per m/s^2
+
   def __init__(self, CP):
     # Gas/brake lookups
     self.MAX_BRAKE = 400  # ~ -4.0 m/s^2 with regen
@@ -57,8 +65,12 @@ class CarControllerParams:
     self.GAS_LOOKUP_BP = [max_regen_acceleration, 0., self.ACCEL_MAX]
     self.GAS_LOOKUP_V = [self.MAX_ACC_REGEN, 0., self.MAX_GAS]
 
-    self.BRAKE_LOOKUP_BP = [self.ACCEL_MIN, max_regen_acceleration]
-    self.BRAKE_LOOKUP_V = [self.MAX_BRAKE, 0.]
+    # Below the regen breakpoint start the friction command at the dead band so the first
+    # count past the breakpoint produces torque, then scale by the fitted gain. The 0 -> 80
+    # step at the breakpoint is torque-continuous because 80 counts delivers nothing.
+    brake_at_min = self.BRAKE_DEADBAND + (max_regen_acceleration - self.ACCEL_MIN) * self.NM_PER_ACCEL / self.BRAKE_NM_PER_COUNT
+    self.BRAKE_LOOKUP_BP = [self.ACCEL_MIN, max_regen_acceleration - 1e-3, max_regen_acceleration]
+    self.BRAKE_LOOKUP_V = [min(brake_at_min, self.MAX_BRAKE), self.BRAKE_DEADBAND, 0.]
 
 
 class GMSafetyFlags(IntFlag):
