@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+
+import numpy as np
 from enum import Enum, IntFlag
 
 from opendbc.car import Bus, PlatformConfig, DbcDict, Platforms, CarSpecs
@@ -42,6 +44,12 @@ class CarControllerParams:
   BRAKE_NM_PER_COUNT = 5.7   # Nm / count above the dead band
   NM_PER_ACCEL = 536.        # Nm per m/s^2
 
+  # Regen available vs speed, from the HPCM's own request limit in logs (delivered == requested):
+  # ~205 Nm per m/s until the -650 Nm ACC regen limit is reached near 3.2 m/s. Below that the
+  # friction leg has to start earlier, so the regen/friction breakpoint follows this curve.
+  MAX_REGEN_ACCEL_BP = [0., 3.2]   # m/s
+  MAX_REGEN_ACCEL_V = [0., -1.0]   # m/s^2
+
   def __init__(self, CP):
     # Gas/brake lookups
     self.MAX_BRAKE = 400  # ~ -4.0 m/s^2 with regen
@@ -65,12 +73,29 @@ class CarControllerParams:
     self.GAS_LOOKUP_BP = [max_regen_acceleration, 0., self.ACCEL_MAX]
     self.GAS_LOOKUP_V = [self.MAX_ACC_REGEN, 0., self.MAX_GAS]
 
+    self.BRAKE_LOOKUP_BP, self.BRAKE_LOOKUP_V = self._brake_lookup(max_regen_acceleration)
+
+  def _brake_lookup(self, max_regen_acceleration):
     # Below the regen breakpoint start the friction command at the dead band so the first
     # count past the breakpoint produces torque, then scale by the fitted gain. The 0 -> 80
     # step at the breakpoint is torque-continuous because 80 counts delivers nothing.
     brake_at_min = self.BRAKE_DEADBAND + (max_regen_acceleration - self.ACCEL_MIN) * self.NM_PER_ACCEL / self.BRAKE_NM_PER_COUNT
-    self.BRAKE_LOOKUP_BP = [self.ACCEL_MIN, max_regen_acceleration - 1e-3, max_regen_acceleration]
-    self.BRAKE_LOOKUP_V = [min(brake_at_min, self.MAX_BRAKE), self.BRAKE_DEADBAND, 0.]
+    return ([self.ACCEL_MIN, max_regen_acceleration - 1e-3, max_regen_acceleration],
+            [min(brake_at_min, self.MAX_BRAKE), self.BRAKE_DEADBAND, 0.])
+
+  def compute_gas_brake(self, accel, v_ego):
+    """Per-frame gas (Nm) and friction brake (counts) for a desired accel, with the regen/friction
+    breakpoint following the speed-dependent regen limit."""
+    max_regen_acceleration = float(np.interp(v_ego, self.MAX_REGEN_ACCEL_BP, self.MAX_REGEN_ACCEL_V))
+    if max_regen_acceleration > -1e-3:
+      # no regen available: all braking is friction
+      gas = float(np.interp(accel, [0., self.ACCEL_MAX], [0., self.MAX_GAS])) if accel > 0 else self.MAX_ACC_REGEN
+      brake_bp, brake_v = [self.ACCEL_MIN, -1e-3, 0.], [min(self.BRAKE_DEADBAND + (0. - self.ACCEL_MIN) * self.NM_PER_ACCEL / self.BRAKE_NM_PER_COUNT, self.MAX_BRAKE), self.BRAKE_DEADBAND, 0.]
+    else:
+      gas = float(np.interp(accel, [max_regen_acceleration, 0., self.ACCEL_MAX], [self.MAX_ACC_REGEN, 0., self.MAX_GAS]))
+      brake_bp, brake_v = self._brake_lookup(max_regen_acceleration)
+    brake = int(round(float(np.interp(accel, brake_bp, brake_v))))
+    return gas, brake
 
 
 class GMSafetyFlags(IntFlag):
