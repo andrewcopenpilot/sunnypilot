@@ -222,9 +222,9 @@ REGEN_ONLY_MANEUVERS = [
   ),
 ]
 
-# TEMPORARY: the regen-only list is active. Revert to STANDARD_MANEUVERS together with re-enabling
-# friction brakes in opendbc/car/gm/carcontroller.py.
-MANEUVERS = REGEN_ONLY_MANEUVERS
+# REGEN_ONLY_MANEUVERS is only meaningful with friction brakes disabled in the car controller (done
+# once, 2026-09-06, commit e8d3546715); the standard suite is the active list.
+MANEUVERS = STANDARD_MANEUVERS
 
 
 def main():

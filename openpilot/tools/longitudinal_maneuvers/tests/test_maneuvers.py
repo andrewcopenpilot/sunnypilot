@@ -42,7 +42,7 @@ class TestManeuvers(unittest.TestCase):
     self.assertEqual(m.actions[0].accel_bp, [-2.])
     self.assertEqual(round(m.initial_speed / 0.44704), 40)
     self.assertFalse(isinstance(m, StopManeuver))
-    self.assertIs(MANEUVERS, REGEN_ONLY_MANEUVERS)  # TEMPORARY test commit
+    self.assertIs(MANEUVERS, STANDARD_MANEUVERS)
 
   def test_ramp_and_sweep_shapes(self):
     def copy(template):
