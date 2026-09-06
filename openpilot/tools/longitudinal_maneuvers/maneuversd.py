@@ -185,10 +185,10 @@ MANEUVERS = [
     initial_speed=20. * CV.MPH_TO_MS,
   ),
   Maneuver(
-    "brake sweep and release: 0 to -2.5m/s^2 over 10s from 30mph",
+    "brake sweep and release: 0 to -2.5m/s^2 over 10s from 40mph",
     [Action([0., -2.5], [0., 10.]), Action([0.], [2])],
     repeat=1,
-    initial_speed=30. * CV.MPH_TO_MS,
+    initial_speed=40. * CV.MPH_TO_MS,
   ),
   Maneuver(
     "brake step and release: -1m/s^2 from 40mph",
