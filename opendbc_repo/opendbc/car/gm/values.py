@@ -37,23 +37,27 @@ class CarControllerParams:
   ACCEL_MIN = -4.  # m/s^2
 
   # POC (2017 Volt, ASCM interceptor), all fitted from logs at near-full charge (380-390 V).
-  # Friction-brake path (0x315 command -> EBCM total brake torque): no torque below a dead band,
-  # then ~5.2 Nm per count. The dead band is ~78 counts at 4 m/s and above but only ~40 below
-  # 2 m/s (pads already loaded at low speed), so it tapers with speed. First 0.5 s after any
-  # application delivers little regardless of counts (pressure build / ~0.25 s delay).
-  # 1 m/s^2 at the wheels ~536 Nm (1606 kg, r 0.334 m).
-  BRAKE_DEADBAND_BP = [2., 4.]        # m/s
-  BRAKE_DEADBAND_V = [40., 78.]       # counts
-  BRAKE_NM_PER_COUNT = 5.2            # Nm / count above the dead band
+  # Brake path (0x315 FrictionBrakeCmd): the count is a TOTAL brake torque request to the EBCM, which fills it
+  # with regen first (up to ~650-1000 Nm depending on speed, well above the ACC-path cap) and friction for the
+  # rest. Fit over six drives (2026-09-05/06): ~4.8 Nm per count, no dead band above 4 m/s, ~20 counts below
+  # 3 m/s where regen is nearly gone. ~0.25 s delay. 1 m/s^2 at the wheels ~536 Nm (1606 kg, r 0.334 m).
+  BRAKE_DEADBAND_BP = [3., 4.]        # m/s
+  BRAKE_DEADBAND_V = [20., 0.]        # counts
+  BRAKE_NM_PER_COUNT = 4.8            # Nm of total brake torque per count
   NM_PER_ACCEL = 536.                 # Nm per m/s^2
 
-  # Regen actually delivered through openpilot's GasRegenCmd path, measured with friction disabled
-  # (2026-09-06, -650 Nm request, near-full charge ~390 V). Below ~9 m/s it is a torque limit that does
-  # not move with charge (mid-SOC drives match); above ~10 m/s it falls as 1/v because the pack accepts
-  # only ~15 kW near full (mid SOC delivered -536 Nm / 31 kW at 20 m/s), so the high-speed points are a
-  # full-charge curve and conservative at lower charge. The regen/friction breakpoint follows this curve.
-  MAX_REGEN_TORQUE_BP = [1.25, 2.25, 3.5, 7., 9., 13., 17.]   # m/s
-  MAX_REGEN_TORQUE_V = [0., 150., 280., 396., 400., 330., 295.]   # Nm
+  # ACC regen path (GasRegenCmd) delivers min(request, cap). The cap is ~400 Nm at 7-9 m/s regardless of
+  # charge, but above ~10 m/s it depends strongly on charge (300 Nm at 15 m/s with 390.6 V at rest, 500 Nm
+  # at 387.9 V). This curve is the lowest cap measured (near-full charge, friction disabled, 2026-09-06).
+  # Decel torque up to it is requested 1:1 on the regen path; beyond it the whole request goes to the
+  # brake path, whose total-torque command does not depend on charge.
+  REGEN_HANDOFF_TORQUE_BP = [1.25, 2.25, 3.5, 7., 9., 13., 17.]   # m/s
+  REGEN_HANDOFF_TORQUE_V = [0., 150., 280., 396., 400., 330., 295.]   # Nm
+
+  # Below ~1 m/s the HPCM adds creep torque (up to ~+250 Nm at rest) whatever the regen request says, so the brake
+  # request has to cancel it or the car eases off the brakes and rolls (ordinary drive 2026-09-06 18:04, 635 s).
+  CREEP_TORQUE_BP = [0., 1.0]   # m/s
+  CREEP_TORQUE_V = [250., 0.]   # Nm
 
   def __init__(self, CP):
     # Gas/brake lookups
@@ -78,33 +82,20 @@ class CarControllerParams:
     self.GAS_LOOKUP_BP = [max_regen_acceleration, 0., self.ACCEL_MAX]
     self.GAS_LOOKUP_V = [self.MAX_ACC_REGEN, 0., self.MAX_GAS]
 
-    self.BRAKE_LOOKUP_BP, self.BRAKE_LOOKUP_V = self._brake_lookup(max_regen_acceleration, self.BRAKE_DEADBAND_V[-1])
-
-  def _brake_lookup(self, max_regen_acceleration, deadband):
-    # Below the regen breakpoint start the friction command at the dead band so the first count
-    # past the breakpoint produces torque, then scale by the fitted gain. The 0 -> deadband step at
-    # the breakpoint is torque-continuous because the dead band delivers nothing.
-    brake_at_min = deadband + (max_regen_acceleration - self.ACCEL_MIN) * self.NM_PER_ACCEL / self.BRAKE_NM_PER_COUNT
-    return ([self.ACCEL_MIN, max_regen_acceleration - 1e-3, max_regen_acceleration],
-            [min(brake_at_min, self.MAX_BRAKE), deadband, 0.])
-
-  def max_regen_acceleration(self, v_ego):
-    return -float(np.interp(v_ego, self.MAX_REGEN_TORQUE_BP, self.MAX_REGEN_TORQUE_V)) / self.NM_PER_ACCEL
-
   def compute_gas_brake(self, accel, v_ego):
-    """Per-frame gas (Nm) and friction brake (counts) for a desired accel. The regen/friction
-    breakpoint follows the delivered-regen curve and the friction dead band follows speed."""
-    a_r = self.max_regen_acceleration(v_ego)
+    """Per-frame gas (Nm) and brake (counts) for a desired accel. Decel torque is requested 1:1 on the
+    regen path up to the conservative regen cap; beyond it the same total goes to the brake path and the
+    EBCM does the regen/friction split, so the delivered torque is continuous across the hand-off."""
+    if accel >= 0:
+      return float(np.interp(accel, [0., self.ACCEL_MAX], [0., self.MAX_GAS])), 0
+    torque = -accel * self.NM_PER_ACCEL
+    gas = max(-torque, self.MAX_ACC_REGEN)
+    torque += float(np.interp(v_ego, self.CREEP_TORQUE_BP, self.CREEP_TORQUE_V))
+    handoff = float(np.interp(v_ego, self.REGEN_HANDOFF_TORQUE_BP, self.REGEN_HANDOFF_TORQUE_V))
+    if torque <= handoff:
+      return gas, 0
     deadband = float(np.interp(v_ego, self.BRAKE_DEADBAND_BP, self.BRAKE_DEADBAND_V))
-    if a_r > -1e-3:
-      # no regen available: all braking is friction; keep max regen requested (harmless, HPCM delivers none)
-      gas = float(np.interp(accel, [0., self.ACCEL_MAX], [0., self.MAX_GAS])) if accel >= 0 else self.MAX_ACC_REGEN
-      brake_bp, brake_v = self._brake_lookup(0., deadband)
-      brake_bp[1] = -1e-3
-    else:
-      gas = float(np.interp(accel, [a_r, 0., self.ACCEL_MAX], [self.MAX_ACC_REGEN, 0., self.MAX_GAS]))
-      brake_bp, brake_v = self._brake_lookup(a_r, deadband)
-    brake = int(round(float(np.interp(accel, brake_bp, brake_v))))
+    brake = int(round(min(deadband + torque / self.BRAKE_NM_PER_COUNT, self.MAX_BRAKE)))
     return gas, brake
 
 
