@@ -69,10 +69,6 @@ class CarControllerParams:
   BRAKE_COUNTS_PER_MPS2 = 100.    # FrictionBrakeCmd is signed 0.01 m/s^2 (MPU2 getter FUN_00047cb0)
   NEAR_STOP_SPEED = 1.5           # m/s, stock brake sub-mode 3 ("near stop") threshold (cal 0x820)
 
-  # 0x1C5 AxleTorqueMin is the regen torque limit for the ACC path but not the pack charge-power cap
-  # (rlogs: ~13 kW at ~390 V). Until that is learned again, assume a conservative fixed cap.
-  REGEN_POWER_CAP = 13000.        # W
-
   def __init__(self, CP):
     # Gas/brake lookups
     self.MAX_BRAKE = 400  # ~ -4.0 m/s^2 with regen
@@ -108,9 +104,11 @@ class CarControllerParams:
     return (t / self.FF_R - self.FF_CD * v_ego * v_ego) / self.FF_MASS - self.FF_G_CRR
 
   def regen_accel_available(self, axle_torque_min, v_ego):
-    """Accel the ACC regen path can deliver now: the HPCM's live torque limit (0x1C5 AxleTorqueMin), the
-    pack power cap, and never more regen than we may command (panda min_gas)."""
-    t = max(axle_torque_min, -self.REGEN_POWER_CAP * self.FF_R / max(v_ego, 1.), self.MAX_ACC_REGEN)
+    """Accel the ACC regen path can deliver now, as stock: the HPCM's live torque limit (0x1C5
+    AxleTorqueMin) and never more regen than we may command (panda min_gas). Note the HPCM field does not
+    include the pack charge-power cap (~13 kW near full charge in the rlogs); stock over-requests there
+    and lets the PID catch up, and so do we."""
+    t = max(axle_torque_min, self.MAX_ACC_REGEN)
     return self.accel_from_torque(min(t, 0.), v_ego)
 
 
