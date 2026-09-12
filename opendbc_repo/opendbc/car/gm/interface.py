@@ -145,11 +145,12 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
       ret.minEnableSpeed = 18 * CV.MPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
 
-      # Tuning (POC, 2017 Volt ASCM interceptor). Identified plant: friction delay ~0.25 s,
-      # regen rise ~0.2 s, aEgo lag ~0.15 s. Simulated on it, kp 0.2-0.3 (longcontrol.py, the
-      # schema has no kp field) with ki ~1.0-1.5 removed the 2-3 s limit cycle seen with
-      # kp 0 / ki 2.4. ki keeps the 5/35 m/s taper.
-      ret.longitudinalTuning.kiV = [1.2, 0.8]
+      # Tuning (2017 Volt ASCM interceptor): stock ASCM accel-loop gains, decompiled from the
+      # Accessory cal (FUN_0013a5d0, tables 0x736/0x74e). Stock ki rises with speed, 0.225 /s
+      # below 5 m/s to 0.60 /s above 15 m/s; kp is 0.02-0.2 scheduled on magnitude (longcontrol.py
+      # LONG_KP holds a fixed 0.1, the schema has no kp field). Earlier POC values: kp 0.3, ki 1.2/0.8.
+      ret.longitudinalTuning.kiBP = [5., 15.]
+      ret.longitudinalTuning.kiV = [0.3, 0.6]
 
     # These cars have been put into dashcam only due to both a lack of users and test coverage.
     # These cars likely still work fine. Once a user confirms each car works and a test route is
