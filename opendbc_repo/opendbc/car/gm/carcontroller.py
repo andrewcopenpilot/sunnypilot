@@ -37,6 +37,44 @@ class CarController(CarControllerBase):
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint][Bus.chassis])
 
+    # stock ASCM longitudinal state
+    self.brake_mode = False       # False: torque mode (stock mode 1), True: friction-brake mode (stock mode 2)
+    self.brake_accel_cmd = 0.     # rate-limited brake-path accel command, m/s^2
+    self.gas_cmd = 0.             # rate-limited torque-mode GasRegenCmd, Nm
+
+  def stock_gas_brake(self, accel, CS, stopping):
+    """Gas (Nm) and brake (counts) the way the stock ASCM derives them from an accel target.
+    Mirrors FUN_0013afc0 (mode select), FUN_0013a360 (torque path) and FUN_00131440 (brake path)."""
+    p = self.params
+    v = CS.out.vEgo
+    dt = 4 * DT_CTRL  # 25 Hz
+
+    # regen the ACC path can deliver right now, from the HPCM's live limit (0x1C5)
+    t_min = CS.axle_torque_min if CS.axle_torque_min_valid else p.MAX_ACC_REGEN
+    a_regen = p.regen_accel_available(t_min, v)
+
+    # mode select with hysteresis; stock is always in brake mode through a stop
+    margin = float(np.interp(v, p.BRAKE_ENTRY_MARGIN_BP, p.BRAKE_ENTRY_MARGIN_V))
+    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if self.brake_mode else 0.)
+    self.brake_mode = accel < thresh or stopping
+
+    if not self.brake_mode:
+      # torque mode: physics feedforward on the gas/regen path, rate limited as stock, brakes idle
+      target = float(np.clip(p.torque_ff(accel, v), p.MAX_ACC_REGEN, p.MAX_GAS))
+      up = float(np.interp(v, p.GAS_RATE_UP_BP, p.GAS_RATE_UP_V)) * dt
+      self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
+      self.brake_accel_cmd = 0.
+      return self.gas_cmd, 0
+
+    # brake mode: fixed max ACC regen request (stock cal 0x834), whole decel target on the brake path
+    self.gas_cmd = p.MAX_ACC_REGEN
+    target = min(accel, 0.)
+    target = max(target, float(np.interp(v, p.STOCK_DECEL_FLOOR_BP, p.STOCK_DECEL_FLOOR_V)), p.ACCEL_MIN)
+    step = p.BRAKE_JERK_LIMIT * dt
+    self.brake_accel_cmd = float(np.clip(target, self.brake_accel_cmd - step, self.brake_accel_cmd + step))
+    brake = int(round(-self.brake_accel_cmd * p.BRAKE_COUNTS_PER_MPS2))
+    return self.gas_cmd, min(brake, p.MAX_BRAKE)
+
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -89,18 +127,17 @@ class CarController(CarControllerBase):
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = 0
+          self.brake_mode = False
+          self.brake_accel_cmd = 0.
         else:
-          # regen/friction split follows the speed-dependent regen limit (see CarControllerParams)
-          self.apply_gas, self.apply_brake = self.params.compute_gas_brake(actuators.accel, CS.out.vEgo)
-          # Don't allow any gas above inactive regen while stopping
-          # FIXME: brakes aren't applied immediately when enabling at a stop
-          if stopping:
-            self.apply_gas = self.params.INACTIVE_REGEN
+          # stock ASCM two-mode logic (see CarControllerParams)
+          self.apply_gas, self.apply_brake = self.stock_gas_brake(actuators.accel, CS, stopping)
 
         idx = (self.frame // 4) % 4
 
         at_full_stop = CC.longActive and CS.out.standstill
-        near_stop = CC.longActive and (abs(CS.out.vEgo) < self.params.NEAR_STOP_BRAKE_PHASE)
+        # stock brake sub-mode 3: only while braking below 1.5 m/s
+        near_stop = CC.longActive and self.brake_mode and (abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
         # TODO: can we always check the longControlState?

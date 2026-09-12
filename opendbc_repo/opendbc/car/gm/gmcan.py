@@ -77,15 +77,14 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   if enabled and CP.carFingerprint in (CAR.CHEVROLET_BOLT_EUV,):
     mode = 0x9
 
+  # Stock ASCM (Volt, decompiled): bit 3 = brake path active, low 3 bits = 1 idle, 2 braking,
+  # 3 near stop (braking below 1.5 m/s), 5 standstill. So 0x1 / 0xA / 0xB / 0xD.
   if apply_brake > 0:
     mode = 0xa
+    if near_stop:
+      mode = 0xb
     if at_full_stop:
       mode = 0xd
-
-    # TODO: this is to have GM bringing the car to complete stop,
-    # but currently it conflicts with OP controls, so turned off. Not set by all cars
-    #elif near_stop:
-    #  mode = 0xb
 
   brake = (0x1000 - apply_brake) & 0xfff
   checksum = (0x10000 - (mode << 12) - brake - idx) & 0xffff
