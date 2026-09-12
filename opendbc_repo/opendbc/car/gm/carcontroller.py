@@ -4,7 +4,7 @@ from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.gm import gmcan
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons
+from opendbc.car.gm.values import CAR, DBC, CanBus, CarControllerParams, CruiseButtons
 from opendbc.car.interfaces import CarControllerBase
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -145,8 +145,19 @@ class CarController(CarControllerBase):
           at_full_stop = at_full_stop and stopping
           friction_brake_bus = CanBus.POWERTRAIN
 
-        # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
-        can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.OBSTACLE, self.apply_gas, idx, CC.enabled, at_full_stop))
+        # Normally this bit describes ACC engagement, independently of actuation.
+        gas_regen_active = CC.enabled
+        if self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.autoResumeSng:
+          # Old kegman ZERO_GAS was raw 2048; this DBC uses signed Nm (zero = 0).
+          resume_from_stop = (CC.longActive and CS.out.cruiseState.standstill and
+                              not stopping and not CS.out.brakePressed and
+                              self.apply_gas >= 0. and self.apply_brake == 0)
+          at_full_stop = CC.longActive and CS.out.cruiseState.standstill and not resume_from_stop
+          if resume_from_stop:
+            gas_regen_active = False
+
+        can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.OBSTACLE, self.apply_gas,
+                                                       idx, gas_regen_active, at_full_stop))
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                              idx, CC.enabled, near_stop, at_full_stop, self.CP))
 

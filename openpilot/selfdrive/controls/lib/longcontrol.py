@@ -1,5 +1,6 @@
 import numpy as np
 from opendbc.car.structs import car
+from opendbc.car.gm.values import CAR
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.common.pid import PIDController
@@ -60,9 +61,12 @@ class LongControl:
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
 
+    # The Volt ECM stays in standstill until the GM controller resets ACC to resume.
+    volt_auto_resume = (self.CP.carFingerprint == CAR.CHEVROLET_VOLT and
+                        self.CP.openpilotLongitudinalControl and self.CP.autoResumeSng)
     self.long_control_state = long_control_state_trans(self.CP_SP, active, self.long_control_state,
                                                        should_stop, CS.brakePressed,
-                                                       CS.cruiseState.standstill)
+                                                       CS.cruiseState.standstill and not volt_auto_resume)
     if self.long_control_state == LongCtrlState.off:
       self.reset()
       output_accel = 0.

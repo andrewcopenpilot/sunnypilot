@@ -80,7 +80,7 @@ class CarEvents:
       if CS.vEgo < self.CP.minEnableSpeed and not (CS.standstill and CS.brakePressed and
                                                    self.CP.networkLocation == NetworkLocation.fwdCamera):
         events.add(EventName.belowEngageSpeed)
-      if CS.cruiseState.standstill:
+      if CS.cruiseState.standstill and not self.CP.autoResumeSng:
         events.add(EventName.resumeRequired)
 
     elif self.CP.brand == 'volkswagen':
