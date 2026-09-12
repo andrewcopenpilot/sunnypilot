@@ -6,29 +6,41 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 ## Volt tuning suite
 
-This branch runs a 16-run suite designed to score a longitudinal tune in one session:
+This branch runs a 19-run suite, low speed first. The stop and creep block is where the comma 4 /
+end-to-end model problems live (stopping ramp from zero, torque mode unable to hold creep, model
+stop-flag pulses), so it runs first and every trial repeats. The higher-speed block sits at the end,
+at 35 mph as single runs, with one 40 mph run last; disengage to skip it if there is no room.
 
 | Runs | Setup speed | Command | What it measures |
 |---|---|---|---|
-| 2 each | 20 mph | -0.75, -1.25, -2.0 m/s² held 5 s, then 0 for 2 s | regen-only tracking, the regen-to-friction hand-off, friction delivery; steady state after the transient; brake release |
-| 2 | 20 mph | ramp 0.5 m/s³ down to -1.5, hold 2 s, then 0 | a planner-shaped request; separates actuator delay from gain |
-| 2 | 40 mph | sweep 0 to -2.5 m/s² over 10 s, then 0 | one continuous map of command vs delivered torque: dead band, friction gain, regen saturation |
-| 2 | 40 mph | -1.0 held 4 s, then 0 | regen at the breakpoint where the pack power cap binds at high charge |
-| 2 | 40 mph | -1.5 held 3 s, then -0.5 held 3 s, then 0 | the same plus a partial release (integrator unwind) |
-| 2 | 10 mph | stop at -0.75 to standstill, hold 3 s | stopping transition and brake hold (see stop-test procedure below) |
+| 2 | 10 mph | stop at -0.75 to standstill, hold 3 s | baseline stopping transition and brake hold (stop-test procedure below) |
+| 2 | 5 mph | stop at -0.5 to standstill, hold 3 s | gentle approach with a long creep-speed tail: does the tune crawl or surge below 1 m/s |
+| 2 | 15 mph | stop at -1.5 to standstill, hold 3 s | model-like harder approach; friction bite and integrator state at the hand-over to standstill |
+| 2 | 10 mph | stop at -0.75, then at standstill three 0.3 s creep pulses (stop flag off, +0.05 m/s² target) 1.5 s apart, then hold 3 s | reproduces the model's stop-flag flap: the hold must survive a pulse without releasing the brake or rolling |
+| 2 | 5 mph | -0.5 for 3.5 s (to ~0.5 m/s), 0 for 4 s, -0.3 for 4 s, 0 for 2 s | creep crawl: holding a crawl at zero target, then a slightly negative target at crawl speed (the route-41 case) |
+| 2 | 10 mph | -0.5 held 3 s, then 0 for 3 s | low-speed brake step and the brake-to-torque re-entry near 3 m/s |
+| 1 each | 35 mph | -0.75, -1.25, -2.0 m/s² held 5 s, then 0 for 2 s | regen-only tracking, the regen-to-friction hand-off, friction delivery; steady state after the transient; brake release |
+| 1 | 35 mph | ramp 0.5 m/s³ down to -1.5, hold 2 s, then 0 | a planner-shaped request; separates actuator delay from gain |
+| 1 | 35 mph | sweep 0 to -2.5 m/s² over 10 s, then 0 | one continuous map of command vs delivered torque: dead band, friction gain, regen saturation (ends near 7 mph) |
+| 1 | 35 mph | -1.5 held 3 s, then -0.5 held 3 s, then 0 | the same plus a partial release (integrator unwind) |
+| 1 | 40 mph | -1.0 held 4 s, then 0 | regen at the breakpoint where the pack power cap binds at high charge; the only 40 mph run, last |
+
+The creep crawl ends below the 0.3 m/s stop rule, so the car stops at the end of its -0.3 phase; if the
+ECM is then in cruise standstill, tap the accelerator to resume so the tool can set up the repeat.
 
 Zero target acceleration is speed holding, not a guarantee of zero gas or brake actuation.
 Between runs the tool returns to the setup speed and waits for its three-second ready
 condition. The 40 mph runs need more road; the sweep covers roughly 180 m of braking and ends
 near 12 mph so the tool can recover to the next setup speed on its own.
 
-The two stops from 10 mph behave as before: each continues until standstill is reported
-and speed is below 0.1 m/s, then maintains stopping intent for three continuous seconds.
-If the car moves during the hold, the hold timer restarts.
+Each stop continues until standstill is reported and speed is below 0.1 m/s, then maintains
+stopping intent for three continuous seconds. If the car moves during the hold, the hold timer
+restarts. In the creep-pulse trial the hold timer only runs after the last pulse, and the timeout
+for that trial is 30 s instead of 20 s.
 
 Before the first stop test, disengage and take control. When ready on a clear,
 straight section, manually move above the car's minimum engagement speed (3 mph
-on this branch) and engage; the tool sets up at 10 mph and waits three seconds.
+on this branch) and engage; the tool sets up at the trial's speed and waits three seconds.
 After each stop, wait for **"Stop complete: take control before next run"**, then
 take control and disengage. The tool keeps stopping intent until disengagement;
 it does **not** automatically accelerate out of a completed stop. Manually set up

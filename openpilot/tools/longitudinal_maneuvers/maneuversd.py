@@ -99,22 +99,47 @@ class StopManeuver(Maneuver):
   stop_accel: float = -0.5
   timeout: float = 20.
   hold_time: float = 3.
+  # Creep pulses: once standstill is reached, drop stopping intent for pulse_off_time with a small positive
+  # target and the stop flag off, the way the e2e model flaps at a no-lead stop (2026-09-12 route 40:
+  # 0.05-0.4 s pulses, desiredAccel -0.08..+0.08, speeds[0] 0.2). The hold timer only runs after the last pulse.
+  creep_pulses: int = 0
+  pulse_off_time: float = 0.3   # s
+  pulse_period: float = 1.5     # s between pulse starts
+  pulse_accel: float = 0.05     # m/s^2 target during a pulse
+  pulse_start: float = 1.0      # s of standstill before the first pulse
   _elapsed_frames: int = 0
   _hold_frames: int = 0
+  _holding_frames: int = 0
   _holding: bool = False
+  _pulse_active: bool = False
   _failed: bool = False
   _complete: bool = False
   _armed: bool = False
 
   @property
   def stopping_intent(self):
-    return self._holding or self._failed or self._complete
+    return (self._holding and not self._pulse_active) or self._failed or self._complete
+
+  @property
+  def pulse_active(self):
+    return self._pulse_active
+
+  def _pulse_state(self, t):
+    """(in a pulse now, all pulses finished) for t seconds since standstill was first reached."""
+    if self.creep_pulses <= 0:
+      return False, True
+    in_pulse = any(s <= t < s + self.pulse_off_time
+                   for s in (self.pulse_start + k * self.pulse_period for k in range(self.creep_pulses)))
+    done = t >= self.pulse_start + (self.creep_pulses - 1) * self.pulse_period + self.pulse_off_time
+    return in_pulse, done
 
   def reset(self):
     super().reset()
     self._elapsed_frames = 0
     self._hold_frames = 0
+    self._holding_frames = 0
     self._holding = False
+    self._pulse_active = False
     self._failed = False
     self._complete = False
 
@@ -137,10 +162,15 @@ class StopManeuver(Maneuver):
 
     if not self._armed:
       return 0.
-    if self.stopping_intent:
+    if self._holding or self._failed or self._complete:
       if self._holding and not self._complete and not self._failed:
         self._elapsed_frames += 1
-        self._hold_frames = self._hold_frames + 1 if standstill and abs(v_ego) < 0.1 else 0
+        self._holding_frames += 1
+        self._pulse_active, pulses_done = self._pulse_state(self._holding_frames * DT_MDL)
+        if self._pulse_active:
+          self._hold_frames = 0
+          return self.pulse_accel
+        self._hold_frames = self._hold_frames + 1 if pulses_done and standstill and abs(v_ego) < 0.1 else 0
         if self._hold_frames * DT_MDL >= self.hold_time:
           self._complete = True
         elif self._elapsed_frames * DT_MDL >= self.timeout:
@@ -164,44 +194,12 @@ class StopManeuver(Maneuver):
     return self.stop_accel
 
 
-# Volt tuning suite (16 runs). Each step holds long enough to measure steady state,
-# the sweep maps the actuator path continuously, the 40 mph runs sit above the
-# regen power cap at high charge, the ramp is a planner-shaped request, and one
-# stop level exercises the stopping transition.
+# Volt tuning suite (19 runs), low speed first. The stop and creep block is where the comma 4 / e2e model
+# problems live (2026-09-12: stopping ramp from zero, torque mode cannot hold creep, model stop-flag pulses), so
+# it runs first and repeats; the higher-speed block sits at the end at 35 mph, with one 40 mph run last for the
+# regen power-cap hand-off (that run needs the most road and can be skipped by disengaging).
 STEP_HOLD = 5.  # seconds; steady-state metrics are taken after the transient
-STANDARD_MANEUVERS = [
-  Maneuver(
-    f"brake step and release: {accel:g}m/s^2 from 20mph",
-    [Action([accel], [STEP_HOLD]), Action([0.], [2])],
-    repeat=1,
-    initial_speed=20. * CV.MPH_TO_MS,
-  )
-  for accel in (-0.75, -1.25, -2.)
-] + [
-  Maneuver(
-    "brake ramp and release: 0.5m/s^3 to -1.5m/s^2 from 20mph",
-    [Action([0., -1.5], [0., 3.]), Action([-1.5], [2]), Action([0.], [2])],
-    repeat=1,
-    initial_speed=20. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "brake sweep and release: 0 to -2.5m/s^2 over 10s from 40mph",
-    [Action([0., -2.5], [0., 10.]), Action([0.], [2])],
-    repeat=1,
-    initial_speed=40. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "brake step and release: -1m/s^2 from 40mph",
-    [Action([-1.], [4]), Action([0.], [2])],
-    repeat=1,
-    initial_speed=40. * CV.MPH_TO_MS,
-  ),
-  Maneuver(
-    "brake step and partial release: -1.5 then -0.5m/s^2 from 40mph",
-    [Action([-1.5], [3]), Action([-0.5], [3]), Action([0.], [2])],
-    repeat=1,
-    initial_speed=40. * CV.MPH_TO_MS,
-  ),
+LOW_SPEED_MANEUVERS = [
   StopManeuver(
     "stop and hold: -0.75m/s^2 from 10mph",
     [],
@@ -209,7 +207,72 @@ STANDARD_MANEUVERS = [
     initial_speed=10. * CV.MPH_TO_MS,
     stop_accel=-0.75,
   ),
+  StopManeuver(
+    "stop and hold: -0.5m/s^2 from 5mph (long creep-speed tail)",
+    [],
+    repeat=1,
+    initial_speed=5. * CV.MPH_TO_MS,
+    stop_accel=-0.5,
+  ),
+  StopManeuver(
+    "stop and hold: -1.5m/s^2 from 15mph (model-like approach)",
+    [],
+    repeat=1,
+    initial_speed=15. * CV.MPH_TO_MS,
+    stop_accel=-1.5,
+  ),
+  StopManeuver(
+    "stop, 3 creep pulses (stop flag off 0.3s, +0.05 target), hold: -0.75m/s^2 from 10mph",
+    [],
+    repeat=1,
+    initial_speed=10. * CV.MPH_TO_MS,
+    stop_accel=-0.75,
+    timeout=30.,
+    creep_pulses=3,
+  ),
+  Maneuver(
+    "creep crawl: -0.5m/s^2 from 5mph to ~0.5m/s, hold 0 for 4s, then -0.3 for 4s, release",
+    [Action([-0.5], [3.5]), Action([0.], [4]), Action([-0.3], [4]), Action([0.], [2])],
+    repeat=1,
+    initial_speed=5. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "low-speed brake step and release: -0.5m/s^2 for 3s from 10mph",
+    [Action([-0.5], [3]), Action([0.], [3])],
+    repeat=1,
+    initial_speed=10. * CV.MPH_TO_MS,
+  ),
 ]
+HIGH_SPEED_MANEUVERS = [
+  Maneuver(
+    f"brake step and release: {accel:g}m/s^2 from 35mph",
+    [Action([accel], [STEP_HOLD]), Action([0.], [2])],
+    initial_speed=35. * CV.MPH_TO_MS,
+  )
+  for accel in (-0.75, -1.25, -2.)
+] + [
+  Maneuver(
+    "brake ramp and release: 0.5m/s^3 to -1.5m/s^2 from 35mph",
+    [Action([0., -1.5], [0., 3.]), Action([-1.5], [2]), Action([0.], [2])],
+    initial_speed=35. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake sweep and release: 0 to -2.5m/s^2 over 10s from 35mph",
+    [Action([0., -2.5], [0., 10.]), Action([0.], [2])],
+    initial_speed=35. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake step and partial release: -1.5 then -0.5m/s^2 from 35mph",
+    [Action([-1.5], [3]), Action([-0.5], [3]), Action([0.], [2])],
+    initial_speed=35. * CV.MPH_TO_MS,
+  ),
+  Maneuver(
+    "brake step and release: -1m/s^2 from 40mph (power-cap hand-off, last run)",
+    [Action([-1.], [4]), Action([0.], [2])],
+    initial_speed=40. * CV.MPH_TO_MS,
+  ),
+]
+STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + HIGH_SPEED_MANEUVERS
 # Regen-only characterisation, paired with the friction-brake disable in the GM car controller in this
 # TEMPORARY commit. The -2 target only saturates the regen request; the car decelerates at whatever regen
 # alone delivers, so from 40 mph the hold takes ~20 s and ~200 m.
@@ -270,6 +333,8 @@ def main():
         alert_msg.alertDebug.alertText1 = 'Stop complete: take control before next run'
       elif isinstance(maneuver, StopManeuver) and not maneuver._armed:
         alert_msg.alertDebug.alertText1 = 'Stop tests: disengage, then engage when ready'
+      elif isinstance(maneuver, StopManeuver) and maneuver.pulse_active:
+        alert_msg.alertDebug.alertText1 = f'Maneuver Active: creep pulse, stop flag off {maneuver.pulse_off_time:0.1f}s'
       elif isinstance(maneuver, StopManeuver) and maneuver._holding:
         alert_msg.alertDebug.alertText1 = 'Maneuver Active: holding standstill for 3 seconds'
       elif maneuver._interrupted:
@@ -288,7 +353,7 @@ def main():
     status = None if maneuver is None else (
       id(maneuver), maneuver._repeated, maneuver.active, maneuver._action_index,
       maneuver._interrupted, maneuver._run_completed, maneuver.finished,
-      isinstance(maneuver, StopManeuver) and (maneuver._armed, maneuver._holding, maneuver._failed, maneuver._complete),
+      isinstance(maneuver, StopManeuver) and (maneuver._armed, maneuver._holding, maneuver.pulse_active, maneuver._failed, maneuver._complete),
     )
     if status != previous_status:
       cloudlog.info("longitudinal maneuver: %s | %s", alert_msg.alertDebug.alertText1, alert_msg.alertDebug.alertText2)
@@ -297,7 +362,9 @@ def main():
 
     longitudinalPlan.aTarget = accel
     stopping_intent = isinstance(maneuver, StopManeuver) and maneuver.stopping_intent
-    longitudinalPlan.shouldStop = stopping_intent or should_stop(v_ego, accel)
+    pulse_active = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
+    # a creep pulse mimics the model: stop flag off at standstill with a slightly positive target
+    longitudinalPlan.shouldStop = stopping_intent or (should_stop(v_ego, accel) and not pulse_active)
 
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = not stopping_intent
