@@ -167,6 +167,7 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
     ret.longitudinalActuatorDelay = 0.5  # large delay to initially start braking
 
     if candidate == CAR.CHEVROLET_VOLT:
+      ret.autoResumeSng = ret.openpilotLongitudinalControl
       ret.minEnableSpeed = 3 * CV.MPH_TO_MS
 
       ret.lateralTuning.pid.kpBP = [0., 40.]
