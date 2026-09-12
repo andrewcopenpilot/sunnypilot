@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 
-import numpy as np
 from enum import Enum, IntFlag
 
 from opendbc.car import Bus, PlatformConfig, DbcDict, Platforms, CarSpecs
@@ -36,28 +35,43 @@ class CarControllerParams:
   ACCEL_MAX = 2.  # m/s^2
   ACCEL_MIN = -4.  # m/s^2
 
-  # POC (2017 Volt, ASCM interceptor), all fitted from logs at near-full charge (380-390 V).
-  # Brake path (0x315 FrictionBrakeCmd): the count is a TOTAL brake torque request to the EBCM, which fills it
-  # with regen first (up to ~650-1000 Nm depending on speed, well above the ACC-path cap) and friction for the
-  # rest. Fit over six drives (2026-09-05/06): ~4.8 Nm per count, no dead band above 4 m/s, ~20 counts below
-  # 3 m/s where regen is nearly gone. ~0.25 s delay. 1 m/s^2 at the wheels ~536 Nm (1606 kg, r 0.334 m).
-  BRAKE_DEADBAND_BP = [3., 4.]        # m/s
-  BRAKE_DEADBAND_V = [20., 0.]        # counts
-  BRAKE_NM_PER_COUNT = 4.8            # Nm of total brake torque per count
-  NM_PER_ACCEL = 536.                 # Nm per m/s^2
+  # ---- Stock ASCM longitudinal model (2017 Volt, ASCM interceptor) ----
+  # Reverse engineered from the ASCM OS (84876565) and its Accessory cal (23366550), see
+  # volt_reverse_engineering/ASCM/NOTES_ascm_dump.md. The stock controller has two modes:
+  #   torque mode:  GasRegenCmd = physics feedforward T(a, v) below, FrictionBrakeCmd idle
+  #   brake mode:   GasRegenCmd = fixed max ACC regen (-650 Nm), FrictionBrakeCmd = the whole accel target
+  #                 in 0.01 m/s^2 counts (the EBCM blends regen and friction itself)
+  # It enters brake mode when the accel target drops below what the regen path can deliver (HPCM 0x1C5
+  # AxleTorqueMin converted to accel) plus a small speed-dependent margin, with 0.05 m/s^2 hysteresis.
+  #
+  # Feedforward: T[Nm] = (M*(a + G_CRR) + CD*v^2) * R, then x(1/EFF) for drive torque, xEFF for regen.
+  FF_MASS = 1776.          # kg (cal 0x8b8 / 10; stock adapts it online, we don't)
+  FF_G_CRR = 0.0785        # m/s^2 rolling resistance (cal 0x89c = 8 -> 8 * 9.81 / 1000)
+  FF_CD = 0.25             # N per (m/s)^2 aero (cal 0x89a / 1000)
+  FF_R = 0.3234            # m, tire circumference 2032 mm / 2pi (cal 0x8b4)
+  FF_EFF = 0.88            # cal 0x8ba / 1000
 
-  # ACC regen path (GasRegenCmd) delivers min(request, cap). The cap is ~400 Nm at 7-9 m/s regardless of
-  # charge, but above ~10 m/s it depends strongly on charge (300 Nm at 15 m/s with 390.6 V at rest, 500 Nm
-  # at 387.9 V). This curve is the lowest cap measured (near-full charge, friction disabled, 2026-09-06).
-  # Decel torque up to it is requested 1:1 on the regen path; beyond it the whole request goes to the
-  # brake path, whose total-torque command does not depend on charge.
-  REGEN_HANDOFF_TORQUE_BP = [1.25, 2.25, 3.5, 7., 9., 13., 17.]   # m/s
-  REGEN_HANDOFF_TORQUE_V = [0., 150., 280., 396., 400., 330., 295.]   # Nm
+  # Torque-mode rate limits on GasRegenCmd (cal 0x6e4 table and 0x6dc), Nm/s
+  GAS_RATE_UP_BP = [0., 5., 30.]      # m/s
+  GAS_RATE_UP_V = [1000., 600., 500.]
+  GAS_RATE_DOWN = 4000.
 
-  # Below ~1 m/s the HPCM adds creep torque (up to ~+250 Nm at rest) whatever the regen request says, so the brake
-  # request has to cancel it or the car eases off the brakes and rolls (ordinary drive 2026-09-06 18:04, 635 s).
-  CREEP_TORQUE_BP = [0., 1.0]   # m/s
-  CREEP_TORQUE_V = [250., 0.]   # Nm
+  # Brake-mode entry: a_target < a_regen_available + margin(v) [+ hysteresis while in brake mode]
+  BRAKE_ENTRY_MARGIN_BP = [0., 5., 30.]        # m/s (cal 0x714)
+  BRAKE_ENTRY_MARGIN_V = [-0.065, -0.125, -0.2]  # m/s^2
+  BRAKE_ENTRY_HYST = 0.05                      # m/s^2 (cal 0x81c)
+
+  # Strongest deceleration the stock ASCM lets the brake path request, vs speed (cal 0x5f6)
+  STOCK_DECEL_FLOOR_BP = [0., 1.5, 2.5, 5.5, 11.6, 20.5, 25., 30.]   # m/s
+  STOCK_DECEL_FLOOR_V = [-1.5, -1.5, -2.0, -5.0, -4.4, -4.4, -3.5, -3.5]   # m/s^2
+
+  BRAKE_JERK_LIMIT = 5.0          # m/s^3 rate limit on the brake command (cal 0x810 table)
+  BRAKE_COUNTS_PER_MPS2 = 100.    # FrictionBrakeCmd is signed 0.01 m/s^2 (MPU2 getter FUN_00047cb0)
+  NEAR_STOP_SPEED = 1.5           # m/s, stock brake sub-mode 3 ("near stop") threshold (cal 0x820)
+
+  # 0x1C5 AxleTorqueMin is the regen torque limit for the ACC path but not the pack charge-power cap
+  # (rlogs: ~13 kW at ~390 V). Until that is learned again, assume a conservative fixed cap.
+  REGEN_POWER_CAP = 13000.        # W
 
   def __init__(self, CP):
     # Gas/brake lookups
@@ -82,21 +96,22 @@ class CarControllerParams:
     self.GAS_LOOKUP_BP = [max_regen_acceleration, 0., self.ACCEL_MAX]
     self.GAS_LOOKUP_V = [self.MAX_ACC_REGEN, 0., self.MAX_GAS]
 
-  def compute_gas_brake(self, accel, v_ego):
-    """Per-frame gas (Nm) and brake (counts) for a desired accel. Decel torque is requested 1:1 on the
-    regen path up to the conservative regen cap; beyond it the same total goes to the brake path and the
-    EBCM does the regen/friction split, so the delivered torque is continuous across the hand-off."""
-    if accel >= 0:
-      return float(np.interp(accel, [0., self.ACCEL_MAX], [0., self.MAX_GAS])), 0
-    torque = -accel * self.NM_PER_ACCEL
-    gas = max(-torque, self.MAX_ACC_REGEN)
-    torque += float(np.interp(v_ego, self.CREEP_TORQUE_BP, self.CREEP_TORQUE_V))
-    handoff = float(np.interp(v_ego, self.REGEN_HANDOFF_TORQUE_BP, self.REGEN_HANDOFF_TORQUE_V))
-    if torque <= handoff:
-      return gas, 0
-    deadband = float(np.interp(v_ego, self.BRAKE_DEADBAND_BP, self.BRAKE_DEADBAND_V))
-    brake = int(round(min(deadband + torque / self.BRAKE_NM_PER_COUNT, self.MAX_BRAKE)))
-    return gas, brake
+  # ---- stock physics helpers (integer math in the ASCM, floats here) ----
+  def torque_ff(self, accel, v_ego):
+    """Axle torque request (Nm) for an accel target, stock ASCM feedforward FUN_0013bbc0 + efficiency."""
+    t = (self.FF_MASS * (accel + self.FF_G_CRR) + self.FF_CD * v_ego * v_ego) * self.FF_R
+    return t / self.FF_EFF if t > 0 else t * self.FF_EFF
+
+  def accel_from_torque(self, torque, v_ego):
+    """Inverse of torque_ff (stock FUN_0013bb20)."""
+    t = torque * self.FF_EFF if torque > 0 else torque / self.FF_EFF
+    return (t / self.FF_R - self.FF_CD * v_ego * v_ego) / self.FF_MASS - self.FF_G_CRR
+
+  def regen_accel_available(self, axle_torque_min, v_ego):
+    """Accel the ACC regen path can deliver now: the HPCM's live torque limit (0x1C5 AxleTorqueMin), the
+    pack power cap, and never more regen than we may command (panda min_gas)."""
+    t = max(axle_torque_min, -self.REGEN_POWER_CAP * self.FF_R / max(v_ego, 1.), self.MAX_ACC_REGEN)
+    return self.accel_from_torque(min(t, 0.), v_ego)
 
 
 class GMSafetyFlags(IntFlag):
