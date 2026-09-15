@@ -18,6 +18,24 @@ ROLL_MAX_DELTA = np.radians(20.0) * DT_MDL  # 20deg in 1 second is well within c
 ROLL_MIN, ROLL_MAX = np.radians(-10), np.radians(10)
 ROLL_LOWERED_MAX = np.radians(8)
 ROLL_STD_MAX = np.radians(1.5)
+
+# Device mounting roll that the localizer reports as road roll. openpilot calibrates pitch and yaw from the
+# camera but assumes the device roll is zero, so any roll in the mount is read as permanent road bank and the
+# lateral controller steers against it. Parked-IMU survey (volt-regen-hunt/parking_roll.py): the comma 4 on this
+# Volt sits +1.23 deg right-side-down. Override at runtime by writing a number (degrees) to MOUNT_ROLL_BIAS_FILE.
+MOUNT_ROLL_BIAS_DEG_DEFAULT = 1.23
+MOUNT_ROLL_BIAS_FILE = "/data/mount_roll_bias_deg"
+
+
+def get_mount_roll_bias_deg() -> float:
+  try:
+    with open(MOUNT_ROLL_BIAS_FILE) as f:
+      return float(f.read().strip())
+  except FileNotFoundError:
+    return MOUNT_ROLL_BIAS_DEG_DEFAULT
+  except Exception:
+    cloudlog.exception(f"paramsd: could not parse {MOUNT_ROLL_BIAS_FILE}, using default")
+    return MOUNT_ROLL_BIAS_DEG_DEFAULT
 LATERAL_ACC_SENSOR_THRESHOLD = 4.0
 OFFSET_MAX = 10.0
 OFFSET_LOWERED_MAX = 8.0
@@ -52,6 +70,9 @@ class VehicleParamsLearner:
     self.observed_yaw_rate = 0.0
     self.observed_roll = 0.0
 
+    self.mount_roll_bias = np.radians(get_mount_roll_bias_deg())
+    cloudlog.warning(f"paramsd: subtracting {np.degrees(self.mount_roll_bias):+.2f} deg of device mounting roll from the localizer roll")
+
     self.avg_offset_valid = True
     self.total_offset_valid = True
     self.roll_valid = True
@@ -79,7 +100,7 @@ class VehicleParamsLearner:
         yaw_rate, yaw_rate_std = 0.0, np.radians(10.0)
       self.observed_yaw_rate = yaw_rate
 
-      localizer_roll, localizer_roll_std = device_motion.orientation.x, device_motion.orientation.x_std
+      localizer_roll, localizer_roll_std = device_motion.orientation.x - self.mount_roll_bias, device_motion.orientation.x_std
       localizer_roll_std = np.radians(1) if np.isnan(localizer_roll_std) else localizer_roll_std
       roll_valid = (localizer_roll_std < ROLL_STD_MAX) and (ROLL_MIN < localizer_roll < ROLL_MAX) and msg.sensorsOK
       if roll_valid:
