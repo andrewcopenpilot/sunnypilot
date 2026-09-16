@@ -170,11 +170,17 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
     if candidate == CAR.CHEVROLET_VOLT:
       ret.autoResumeSng = ret.openpilotLongitudinalControl
       ret.minEnableSpeed = 3 * CV.MPH_TO_MS
+      # EPS accepted LKA down to ~3.1 m/s in logs and rejected it (LKATorqueDeliveredStatus 2) at 2.2-2.7 m/s
+      # (HANDOFF 2026-09-09), so 10 km/h = 2.78 m/s is at the edge of what the Volt PSCM allows.
+      ret.minSteerSpeed = 10 * CV.KPH_TO_MS
 
+      # kp and feedforward validated against hands-off drive logs (2026-09): the sigmoid FF matches the
+      # car's holding torque within 10 % at 15-30 m/s and kp 0.17 @ 40 m/s holds the ~0.6 Nm p90 residual
+      # to ~1.5 deg. A small ki removes the remaining 0.2-0.4 deg steady error in sustained curves.
       ret.lateralTuning.pid.kpBP = [0., 40.]
       ret.lateralTuning.pid.kpV = [0., 0.17]
       ret.lateralTuning.pid.kiBP = [0.]
-      ret.lateralTuning.pid.kiV = [0.]
+      ret.lateralTuning.pid.kiV = [0.015]
       ret.lateralTuning.pid.kf = 1.  # get_steer_feedforward_volt()
       ret.steerActuatorDelay = 0.2
 
