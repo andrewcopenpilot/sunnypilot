@@ -281,6 +281,10 @@ class SelfdriveD(CruiseHelper):
       car_events_sp = self.car_events_sp.update(CS, self.events).to_msg()
       self.events_sp.add_from_msg(car_events_sp)
 
+      # Keep creep-test progress visible below the steering-assist speed threshold.
+      if self.events.has(EventName.longitudinalManeuver):
+        self.events.remove(EventName.belowSteerSpeed)
+
       if self.CP.notCar:
         # wait for everything to init first
         if self.sm.frame > int(2. / DT_CTRL) and self.initialized:
