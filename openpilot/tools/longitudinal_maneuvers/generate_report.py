@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from openpilot.common.utils import tabulate
 
 from openpilot.tools.lib.logreader import LogReader
+from openpilot.tools.longitudinal_maneuvers.maneuver_helpers import collect_maneuvers
 from openpilot.common.hardware.hw import Paths
 
 
@@ -56,7 +57,8 @@ def report(platform, route, _description, CP, ID, maneuvers):
 
       # maneuver validity
       longActive = [m.longActive for m in carControl]
-      maneuver_valid = all(longActive) and (not any(cs.cruiseState.standstill for cs in carState) or CP.autoResumeSng)
+      failed = any(m.which() == 'alertDebug' and m.alertDebug.alertText1.startswith('Creep test invalid:') for m in msgs)
+      maneuver_valid = not failed and all(longActive) and (not any(cs.cruiseState.standstill for cs in carState) or CP.autoResumeSng)
 
       _open = 'open' if maneuver_valid else ''
       title = f'Run #{int(run)+1}' + (' <span style="color: red">(invalid maneuver!)</span>' if not maneuver_valid else '')
@@ -166,22 +168,6 @@ if __name__ == '__main__':
   platform = CP.carFingerprint
   print('processing report for', platform)
 
-  maneuvers: list[tuple[str, list[list]]] = []
-  active_prev = False
-  description_prev = None
-
-  for msg in lr:
-    if msg.which() == 'alertDebug':
-      active = 'Maneuver Active' in msg.alertDebug.alertText1
-      if active and not active_prev:
-        if msg.alertDebug.alertText2 == description_prev:
-          maneuvers[-1][1].append([])
-        else:
-          maneuvers.append((msg.alertDebug.alertText2, [[]]))
-        description_prev = maneuvers[-1][0]
-      active_prev = active
-
-    if active_prev:
-      maneuvers[-1][1][-1].append(msg)
+  maneuvers = collect_maneuvers(lr)
 
   report(platform, args.route, args.description, CP, ID, maneuvers)

@@ -56,10 +56,18 @@ class CarControllerParams:
   GAS_RATE_UP_V = [1000., 600., 500.]
   GAS_RATE_DOWN = 4000.
 
-  # Brake-mode entry: a_target < a_regen_available + margin(v) [+ hysteresis while in brake mode]
+  # Baseline brake-mode entry: accel < a_regen_available + margin(v) [+ hysteresis while braking]
   BRAKE_ENTRY_MARGIN_BP = [0., 5., 30.]        # m/s (cal 0x714)
   BRAKE_ENTRY_MARGIN_V = [-0.065, -0.125, -0.2]  # m/s^2
   BRAKE_ENTRY_HYST = 0.05                      # m/s^2 (cal 0x81c)
+
+  # OEM-inspired moving-creep transitions for the Volt ASCM; toggle for baseline comparisons.
+  STOCK_CREEP_TRANSITIONS = True
+  # OEM accessory 23366550, table 0x708: retention margin while already in brake mode.
+  BRAKE_RETAIN_MARGIN_BP = [0., 5., 30.]
+  BRAKE_RETAIN_MARGIN_V = [0.250, 0.200, 0.200]
+  # Integration choice: restrict the change to creep; this speed blend is not an OEM calibration.
+  STOCK_CREEP_BLEND_BP = [1.0, 1.5]  # m/s, full retention margin below 1.0; baseline above 1.5
 
   # Strongest deceleration the stock ASCM lets the brake path request, vs speed (cal 0x5f6)
   STOCK_DECEL_FLOOR_BP = [0., 1.5, 2.5, 5.5, 11.6, 20.5, 25., 30.]   # m/s

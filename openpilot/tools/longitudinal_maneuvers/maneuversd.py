@@ -211,6 +211,57 @@ class StopManeuver(Maneuver):
     return self.stop_accel
 
 
+@dataclass
+class MovingCreepManeuver(Maneuver):
+  """Acquire a measured crawl before starting timed acceleration commands."""
+  creep_speed: float = 0.8  # m/s, above GM's standstill threshold
+  acquisition_timeout: float = 20.
+  _creep_setup: bool = False
+  _acquisition_frames: int = 0
+  _failure: str = ''
+
+  @property
+  def setup_speed(self):
+    return self.creep_speed if self._creep_setup else super().setup_speed
+
+  @property
+  def stopping_intent(self):
+    return bool(self._failure)
+
+  def _setup(self, v_ego, cruise_standstill):
+    accel = super()._setup(v_ego, cruise_standstill)
+    if self._active and not self._creep_setup:
+      # Preserve the 8 mph -> 3 mph setup, then settle at the measured crawl speed.
+      self._active = False
+      self._creep_setup = True
+    return accel
+
+  def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
+    self._run_completed = False
+    if long_active and self._creep_setup and not self._recovering and not self.finished:
+      if not self._failure:
+        if standstill or cruise_standstill or v_ego < 0.4:
+          self._failure = 'lost moving crawl'
+        elif v_ego > 1.5:
+          self._failure = 'above creep speed range'
+        elif not self._active:
+          self._acquisition_frames += 1
+          if self._acquisition_frames * DT_MDL >= self.acquisition_timeout:
+            self._failure = 'crawl setup timed out'
+      if self._failure:
+        # Do not let an unintended stop turn into a successful timed crawl trial.
+        # Hold stopping intent until disengagement, then retry this same run.
+        self._active = False
+        return -0.3
+    return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
+
+  def reset(self):
+    super().reset()
+    self._creep_setup = False
+    self._acquisition_frames = 0
+    self._failure = ''
+
+
 # Creep-only suite: 8 scenarios, each run twice. Every run first reaches 8 mph,
 # settles at 3 mph for two seconds, and returns to 8 mph after the test.
 LOW_SPEED_MANEUVERS = [
@@ -238,7 +289,22 @@ LOW_SPEED_MANEUVERS = [
     repeat=1, initial_speed=3. * CV.MPH_TO_MS,
   ),
 ]
-STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS
+# Append transition trials; keep the original 16 runs unchanged for route comparisons.
+MOVING_CREEP_MANEUVERS = [
+  MovingCreepManeuver("moving creep: brake then zero accel for 6s", [
+    Action([-0.15], [0.5]), Action([0.], [6.]),
+  ], repeat=1, initial_speed=3. * CV.MPH_TO_MS),
+  MovingCreepManeuver("moving creep: small steps then torque handoff", [
+    Action([-0.15], [0.5]), Action([0.], [1.]),
+    Action([0.05], [1.]), Action([-0.05], [1.]),
+    Action([0.15], [1.]), Action([-0.05], [1.]),
+    Action([0.3], [0.75]), Action([-0.15], [0.75]), Action([0.], [1.]),
+  ], repeat=1, initial_speed=3. * CV.MPH_TO_MS),
+  MovingCreepManeuver("moving creep: brake to torque ramp and back", [
+    Action([-0.15], [0.5]), Action([-0.15, 0.3, -0.15], [0., 2., 4.]), Action([0.], [2.]),
+  ], repeat=1, initial_speed=3. * CV.MPH_TO_MS),
+]
+STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + MOVING_CREEP_MANEUVERS
 MANEUVERS = STANDARD_MANEUVERS
 
 
@@ -280,7 +346,9 @@ def main():
       accel = maneuver.get_accel(v_ego, sm['carControl'].longActive, sm['carState'].standstill,
                                  sm['carState'].cruiseState.standstill, sm['carState'].gasPressed)
 
-      if isinstance(maneuver, StopManeuver) and maneuver._failed:
+      if isinstance(maneuver, MovingCreepManeuver) and maneuver._failure:
+        alert_msg.alertDebug.alertText1 = f'Creep test invalid: take control ({maneuver._failure})'
+      elif isinstance(maneuver, StopManeuver) and maneuver._failed:
         alert_msg.alertDebug.alertText1 = 'Stop timed out: take control'
       elif isinstance(maneuver, StopManeuver) and maneuver._complete:
         alert_msg.alertDebug.alertText1 = 'Stop complete: tap throttle'
@@ -292,6 +360,8 @@ def main():
         alert_msg.alertDebug.alertText1 = 'Maneuver Active: holding stop'
       elif maneuver._interrupted:
         alert_msg.alertDebug.alertText1 = f'Restarting: setup at {maneuver.setup_speed * CV.MS_TO_MPH:.0f} mph'
+      elif isinstance(maneuver, MovingCreepManeuver) and maneuver._creep_setup and not maneuver.active:
+        alert_msg.alertDebug.alertText1 = f'Setting up: settle at {maneuver.creep_speed * CV.MS_TO_MPH:.1f} mph'
       elif maneuver.active:
         alert_msg.alertDebug.alertText1 = f'Maneuver Active: {accel:0.2f} m/s^2'
       else:
@@ -307,6 +377,7 @@ def main():
       id(maneuver), maneuver._repeated, maneuver.active, maneuver._action_index,
       maneuver._interrupted, maneuver._run_completed, maneuver.finished, maneuver._setup_at_speed, maneuver._recovering,
       isinstance(maneuver, StopManeuver) and (maneuver._holding, maneuver.pulse_active, maneuver._failed, maneuver._complete),
+      isinstance(maneuver, MovingCreepManeuver) and (maneuver._creep_setup, maneuver._failure),
     )
     if status != previous_status:
       cloudlog.info("longitudinal maneuver: %s | %s", alert_msg.alertDebug.alertText1, alert_msg.alertDebug.alertText2)
@@ -314,7 +385,7 @@ def main():
     pm.send('alertDebug', alert_msg)
 
     longitudinalPlan.aTarget = accel
-    stopping_intent = isinstance(maneuver, StopManeuver) and maneuver.stopping_intent
+    stopping_intent = isinstance(maneuver, (StopManeuver, MovingCreepManeuver)) and maneuver.stopping_intent
     pulse_active = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
     # a creep pulse mimics the model: stop flag off at standstill with a slightly positive target
     longitudinalPlan.shouldStop = stopping_intent or (should_stop(v_ego, accel) and not pulse_active)

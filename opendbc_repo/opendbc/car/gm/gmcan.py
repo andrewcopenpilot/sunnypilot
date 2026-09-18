@@ -70,7 +70,8 @@ def create_gas_regen_command(packer, bus, throttle, idx, enabled, at_full_stop):
   return packer.make_can_msg("ASCMGasRegenCmd", bus, values)
 
 
-def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_stop, at_full_stop, CP):
+def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_stop, at_full_stop, CP,
+                                  brake_active=False):
   mode = 0x1
 
   # TODO: Understand this better. Volts and ICE Camera ACC cars are 0x1 when enabled with no brake
@@ -79,7 +80,9 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
 
   # Stock ASCM (Volt, decompiled): bit 3 = brake path active, low 3 bits = 1 idle, 2 braking,
   # 3 near stop (braking below 1.5 m/s), 5 standstill. So 0x1 / 0xA / 0xB / 0xD.
-  if apply_brake > 0:
+  # The OEM brake-active flag is independent of numeric brake demand. Keep the default for
+  # existing callers; moving-creep control can retain the brake path with a zero request.
+  if apply_brake > 0 or (enabled and brake_active):
     mode = 0xa
     if near_stop:
       mode = 0xb

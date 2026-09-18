@@ -41,10 +41,21 @@ class CarController(CarControllerBase):
     self.brake_mode = False       # False: torque mode (stock mode 1), True: friction-brake mode (stock mode 2)
     self.brake_accel_cmd = 0.     # rate-limited brake-path accel command, m/s^2
     self.gas_cmd = 0.             # rate-limited torque-mode GasRegenCmd, Nm
+    self.stock_creep_active = False
+
+  def stock_creep_weight(self, CS, stopping):
+    # Hold/resume has additional OEM states; retain the existing stop/start sequence for now.
+    if (not self.params.STOCK_CREEP_TRANSITIONS or self.CP.carFingerprint != CAR.CHEVROLET_VOLT or
+        self.CP.networkLocation != NetworkLocation.gateway or CS.out.vEgo <= 0. or
+        stopping or CS.out.standstill or CS.out.cruiseState.standstill):
+      return 0.
+    return float(np.interp(CS.out.vEgo, self.params.STOCK_CREEP_BLEND_BP, [1., 0.]))
 
   def stock_gas_brake(self, accel, CS, stopping):
-    """Gas (Nm) and brake (counts) the way the stock ASCM derives them from an accel target.
-    Mirrors FUN_0013afc0 (mode select), FUN_0013a360 (torque path) and FUN_00131440 (brake path)."""
+    """OEM-inspired gas (Nm) and brake (counts) allocation from corrected acceleration.
+    Uses FUN_0013afc0/0013a360 transitions in moving creep, with the existing stop/start path.
+    The OEM request-state selector and disturbance compensation are not ported here.
+    """
     p = self.params
     v = CS.out.vEgo
     dt = 4 * DT_CTRL  # 25 Hz
@@ -53,16 +64,30 @@ class CarController(CarControllerBase):
     t_min = CS.axle_torque_min if CS.axle_torque_min_valid else p.MAX_ACC_REGEN
     a_regen = p.regen_accel_available(t_min, v)
 
-    # mode select with hysteresis; stock is always in brake mode through a stop
+    was_braking = self.brake_mode
+    creep_weight = self.stock_creep_weight(CS, stopping)
+    self.stock_creep_active = creep_weight > 0.
     margin = float(np.interp(v, p.BRAKE_ENTRY_MARGIN_BP, p.BRAKE_ENTRY_MARGIN_V))
-    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if self.brake_mode else 0.)
+    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if was_braking else 0.)
+    if was_braking and self.stock_creep_active:
+      retain_margin = float(np.interp(v, p.BRAKE_RETAIN_MARGIN_BP, p.BRAKE_RETAIN_MARGIN_V))
+      # OEM branch using 0x81e=0, with disturbance correction omitted consistently on both paths.
+      # Openpilot has no equivalent to the OEM request-state selector; do not invent a mapping.
+      retain_thresh = a_regen + retain_margin
+      thresh += creep_weight * (retain_thresh - thresh)
     self.brake_mode = accel < thresh or stopping
 
     if not self.brake_mode:
       # torque mode: physics feedforward on the gas/regen path, rate limited as stock, brakes idle
       target = float(np.clip(p.torque_ff(accel, v), p.MAX_ACC_REGEN, p.MAX_GAS))
       up = float(np.interp(v, p.GAS_RATE_UP_BP, p.GAS_RATE_UP_V)) * dt
-      self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
+      if (self.stock_creep_active and was_braking and CS.axle_torque_min_valid and
+          np.isfinite(CS.axle_torque_min)):
+        # OEM FUN_0013a360 seeds the first torque-mode output from 0x1C5 minimum torque.
+        # This intentionally differs from slewing out of the stored -650 Nm brake-mode request.
+        self.gas_cmd = float(np.clip(CS.axle_torque_min, p.MAX_ACC_REGEN, p.MAX_GAS))
+      else:
+        self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
       self.brake_accel_cmd = 0.
       return self.gas_cmd, 0
 
@@ -129,6 +154,7 @@ class CarController(CarControllerBase):
           self.apply_brake = 0
           self.brake_mode = False
           self.brake_accel_cmd = 0.
+          self.stock_creep_active = False
         else:
           # stock ASCM two-mode logic (see CarControllerParams)
           self.apply_gas, self.apply_brake = self.stock_gas_brake(actuators.accel, CS, stopping)
@@ -159,7 +185,9 @@ class CarController(CarControllerBase):
         can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.OBSTACLE, self.apply_gas,
                                                        idx, gas_regen_active, at_full_stop))
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
-                                                             idx, CC.enabled, near_stop, at_full_stop, self.CP))
+                                                             idx, CC.enabled, near_stop, at_full_stop, self.CP,
+                                                             brake_active=(CC.longActive and self.stock_creep_active and
+                                                                           self.brake_mode)))
 
         # Send dashboard UI commands (ACC status)
         send_fcw = hud_alert == VisualAlert.fcw
