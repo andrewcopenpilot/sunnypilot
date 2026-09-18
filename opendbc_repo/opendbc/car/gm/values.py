@@ -71,6 +71,10 @@ class CarControllerParams:
   # Integration choice: restrict the change to creep; this speed blend is not an OEM calibration.
   STOCK_CREEP_BLEND_BP = [1.0, 1.5]  # m/s, full retention margin below 1.0; baseline above 1.5
 
+  # Moving-creep brake-demand trial; set to 1.0 to compare with the unscaled mapping.
+  # Shares the transition speed blend and excludes stopping/standstill.
+  CREEP_BRAKE_SCALE = 0.8
+
   # Strongest deceleration the stock ASCM lets the brake path request, vs speed (cal 0x5f6)
   STOCK_DECEL_FLOOR_BP = [0., 1.5, 2.5, 5.5, 11.6, 20.5, 25., 30.]   # m/s
   STOCK_DECEL_FLOOR_V = [-1.5, -1.5, -2.0, -5.0, -4.4, -4.4, -3.5, -3.5]   # m/s^2

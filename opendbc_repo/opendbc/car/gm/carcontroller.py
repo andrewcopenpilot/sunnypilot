@@ -93,7 +93,11 @@ class CarController(CarControllerBase):
 
     # brake mode: fixed max ACC regen request (stock cal 0x834), whole decel target on the brake path
     self.gas_cmd = p.MAX_ACC_REGEN
-    target = min(accel, 0.)
+    # Reduce moving-creep demand before the existing bounds and slew limit. Mode
+    # selection still uses the unscaled corrected acceleration; integral feedback
+    # can continue increasing demand up to the existing brake limit.
+    brake_scale = 1. - creep_weight * (1. - p.CREEP_BRAKE_SCALE)
+    target = min(accel, 0.) * brake_scale
     target = max(target, float(np.interp(v, p.STOCK_DECEL_FLOOR_BP, p.STOCK_DECEL_FLOOR_V)), p.ACCEL_MIN)
     step = p.BRAKE_JERK_LIMIT * dt
     self.brake_accel_cmd = float(np.clip(target, self.brake_accel_cmd - step, self.brake_accel_cmd + step))

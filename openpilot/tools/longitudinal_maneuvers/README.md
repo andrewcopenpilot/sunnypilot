@@ -7,23 +7,24 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 ## Volt creep tuning suite
 
 The suite contains **22 runs: eleven creep scenarios, each repeated twice**. The
-original eight scenarios remain first, with identical commands, timing, and order
-for direct comparison with the previous 16-run drive. Three moving transition
+original eight scenarios remain first, with identical active commands, durations,
+and order for comparison with the previous 16-run drive. Setup and recovery now
+use 3 mph instead of the earlier 8 mph excursions; compare the measured entry
+speed and acceleration when evaluating results across that change. Three moving transition
 scenarios follow. The test portion starts at 3 mph or below. The old higher-speed braking and regen trials have
 been removed.
 
 Every run follows the same sequence:
 
-1. Accelerate to **8 mph** and stay near that speed for three seconds while showing
+1. Reach **3 mph** and settle there for **two continuous seconds** while showing
    the upcoming test.
-2. Slow to **3 mph** and settle there for **two continuous seconds**.
-3. Perform the creep test below. The three added moving tests first request
+2. Perform the creep test below. The three added moving tests first request
    **-0.15 m/s²** and start their timed commands on the first downward crossing of
    **1.0 m/s (2.2 mph)**; they do not require stable creep.
-4. Return to **8 mph** and stay near that speed for three seconds before advancing.
+3. Return to **3 mph** and stay near that speed for three seconds before advancing.
    Stop-and-hold tests wait for driver acknowledgement first, as described below.
 
-Setup and recovery target 8 mph, with a 0.1 m/s settling tolerance. They use up to
+Setup and recovery target 3 mph, with a 0.1 m/s settling tolerance. They use up to
 +0.75 m/s² acceleration and -0.5 m/s² deceleration. The stop timeout starts when the
 actual test begins, excluding setup and recovery.
 
@@ -46,7 +47,7 @@ is speed holding, not a guarantee of zero gas or brake actuation.
 ### Added moving transition trials (runs 17–22)
 
 The earlier timed crawl could overshoot into the stopping controller before its
-zero-acceleration interval. After the usual 8 mph and 3 mph setup, these additions
+zero-acceleration interval. After the 3 mph setup, these additions
 request a fixed -0.15 m/s² until measured speed first reaches 1.0 m/s or below.
 The timed profile starts immediately after that crossing, without a speed-hold
 or acceleration-settling requirement. The former two-second hold near 1.8 mph
@@ -72,7 +73,7 @@ During acquisition or the active trial, standstill, speed below **0.4 m/s**, or
 speed above **1.5 m/s** invalidates the run. Acquisition also times out after
 **20 seconds**. The screen shows **"Creep test invalid: tap throttle or disengage"** with the
 reason. Until acknowledgement,
-stopping intent stays asserted. Then recover to 8 mph with longitudinal control
+stopping intent stays asserted. Then recover to 3 mph with longitudinal control
 active; that failed attempt advances to the next repetition or scenario so one
 poorly tracked trial cannot block the rest. Its outcome is logged as **failed**,
 not completed. Interruptions before any failure still retry the same attempt.
@@ -95,15 +96,15 @@ the screen says **"Maneuver Active: holding stop"**.
 
 After **"Stop complete: tap throttle"** appears, tap the throttle
 to acknowledge the completed hold. The tool releases stopping intent and recovers to
-8 mph once longitudinal control is active again. Alternatively, disengage, manually
+3 mph once longitudinal control is active again. Alternatively, disengage, manually
 move above the minimum engagement speed (3 mph on this branch), and re-engage to
 recover. Completed stop holds do not automatically launch without acknowledgement.
 
 The two original timed crawl tests and successful added moving trials enter recovery
 automatically after their timed commands. Failed moving trials wait for acknowledgement first.
 If stock cruise holds the car stopped, tap the throttle when **"Test complete: tap throttle"** appears.
-While moving, the screen says **"Recovering to 8 mph"**. A run is only counted after
-the 8 mph recovery has settled. This includes the final run; then the screen shows
+While moving, the screen says **"Recovering to 3 mph"**. A run is only counted after
+the 3 mph recovery has settled. This includes the final run; then the screen shows
 **"Maneuvers Finished"**. Take control to end the drive.
 
 During longitudinal maneuver testing, the low-speed steering warning is suppressed
@@ -114,7 +115,7 @@ A stop/hold that has not completed within **20 seconds of braking onset** shows
 **"Stop timed out: take control"**. Pulse trials allow 30 seconds.
 A timed-out stop maintains stopping intent until takeover; disengage and re-engage
 to retry the same run. Interrupting setup or an unfinished test also restarts that
-run from the 8 mph setup. Interrupting recovery pauses it; re-engagement resumes
+run from the 3 mph setup. Interrupting recovery pauses it; re-engagement resumes
 recovery without repeating the completed test.
 
 Alerts identify the run number and phase. Phase changes, failed attempts, and completed trials are
@@ -127,7 +128,7 @@ each route, and keep the same road direction when comparing tunes.
 ## Instructions
 
 1. Check out this branch on your comma device so the targeted sequence is used.
-2. Locate either a large empty parking lot or road devoid of any car or foot traffic. Flat, straight road is preferred. Leave enough room for the 8 mph setup and recovery on every run. Disengage and take control before turning around.
+2. Locate either a large empty parking lot or road devoid of any car or foot traffic. Flat, straight road is preferred. Leave enough room for the 3 mph setup and recovery on every run. Disengage and take control before turning around.
 3. Turn off the vehicle and set this parameter which will signal to openpilot to start the longitudinal maneuver daemon:
 
    ```sh
@@ -140,7 +141,7 @@ each route, and keep the same road direction when comparing tunes.
 
 5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
-   **Note:** Every run reaches 8 mph before slowing to 3 mph for the test, then returns to 8 mph. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
+   **Note:** Every run settles at 3 mph before the test and recovers to 3 mph afterward. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 
    ![cog-clip-00 01 11 250-00 01 22 250](https://github.com/user-attachments/assets/c312c1cc-76e8-46e1-a05e-bb9dfb58994f)
 

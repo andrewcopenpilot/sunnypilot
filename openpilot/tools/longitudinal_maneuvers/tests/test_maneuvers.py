@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from openpilot.common.constants import CV
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  Action, Maneuver, StopManeuver, MovingCreepManeuver, MANEUVERS, LOW_SPEED_MANEUVERS, STANDARD_MANEUVERS, SETUP_SPEED, DT_MDL,
+  Action, Maneuver, StopManeuver, MovingCreepManeuver, MANEUVERS, LOW_SPEED_MANEUVERS, STANDARD_MANEUVERS, RECOVERY_SPEED, DT_MDL,
 )
 from openpilot.tools.longitudinal_maneuvers.maneuver_helpers import collect_maneuvers
 
@@ -14,10 +14,6 @@ class TestManeuvers(unittest.TestCase):
     return StopManeuver('test', [], repeat=1, initial_speed=3. * CV.MPH_TO_MS, stop_accel=-0.5)
 
   def start(self, m):
-    for _ in range(round(3. / DT_MDL)):
-      m.get_accel(SETUP_SPEED, True, False, False)
-    self.assertTrue(m._setup_at_speed)
-    self.assertFalse(m.active)
     for _ in range(round(2. / DT_MDL)):
       m.get_accel(m.initial_speed, True, False, False)
     self.assertTrue(m.active)
@@ -29,7 +25,7 @@ class TestManeuvers(unittest.TestCase):
 
   def recover(self, m):
     for _ in range(round(3. / DT_MDL)):
-      m.get_accel(SETUP_SPEED, True, False, False)
+      m.get_accel(RECOVERY_SPEED, True, False, False)
     self.assertTrue(m._run_completed)
 
   def test_creep_suite(self):
@@ -39,7 +35,7 @@ class TestManeuvers(unittest.TestCase):
     self.assertEqual(MANEUVERS[:8], LOW_SPEED_MANEUVERS)
     self.assertTrue(all(m.initial_speed == 3. * CV.MPH_TO_MS for m in MANEUVERS))
     self.assertTrue(all(m.repeat == 1 for m in MANEUVERS))
-    self.assertEqual(SETUP_SPEED, 8. * CV.MPH_TO_MS)
+    self.assertEqual(RECOVERY_SPEED, 3. * CV.MPH_TO_MS)
 
   def test_suite_with_simulated_vehicle(self):
     completed = 0
@@ -69,9 +65,9 @@ class TestManeuvers(unittest.TestCase):
           if isinstance(m, MovingCreepManeuver):
             self.assertFalse(m._failure)
           v = max(0., v + accel * DT_MDL)
-          self.assertLessEqual(v, SETUP_SPEED + 0.1)
+          self.assertLessEqual(v, RECOVERY_SPEED + 0.1)
           if m._run_completed:
-            self.assertAlmostEqual(v, SETUP_SPEED, delta=0.1)
+            self.assertAlmostEqual(v, RECOVERY_SPEED, delta=0.1)
             runs += 1
           if m.finished:
             break
@@ -85,16 +81,11 @@ class TestManeuvers(unittest.TestCase):
         completed += runs
     self.assertEqual(completed, 22)
 
-  def test_setup_requires_8mph_then_continuous_2s_at_3mph(self):
+  def test_setup_requires_only_continuous_2s_at_3mph(self):
     m = self.stop()
-    for _ in range(100):
-      self.assertGreater(m.get_accel(m.initial_speed, True, False, False), 0.)
+    self.assertEqual(m.setup_speed, 3. * CV.MPH_TO_MS)
+    self.assertGreater(m.get_accel(0., True, True, False), 0.)
     self.assertFalse(m.active)
-    self.assertFalse(m._setup_at_speed)
-    for _ in range(60):
-      m.get_accel(SETUP_SPEED, True, False, False)
-    self.assertTrue(m._setup_at_speed)
-    self.assertLess(m.get_accel(SETUP_SPEED, True, False, False), 0.)
     for _ in range(39):
       m.get_accel(m.initial_speed, True, False, False)
     self.assertFalse(m.active)
@@ -107,13 +98,13 @@ class TestManeuvers(unittest.TestCase):
     self.assertTrue(m.active)
     self.assertEqual(m._elapsed_frames, 0)
 
-  def test_setup_interruption_restarts_at_8mph(self):
-    for after_8mph in (False, True):
+  def test_setup_interruption_restarts_at_3mph(self):
+    for frames in (1, 30):
       m = self.stop()
-      for _ in range(60 if after_8mph else 30):
-        m.get_accel(SETUP_SPEED, True, False, False)
+      for _ in range(frames):
+        m.get_accel(m.initial_speed, True, False, False)
       self.assertEqual(m.get_accel(m.initial_speed, False, False, False), 0.)
-      self.assertEqual(m.setup_speed, SETUP_SPEED)
+      self.assertEqual(m.setup_speed, 3. * CV.MPH_TO_MS)
       self.assertEqual(m._ready_cnt, 0)
       self.start(m)
 
@@ -155,20 +146,20 @@ class TestManeuvers(unittest.TestCase):
           self.recover(m)
           self.assertEqual(m.finished, run == 1)
 
-  def test_recovery_waits_for_8mph_before_counting_run(self):
+  def test_recovery_waits_for_3mph_before_counting_run(self):
     m = Maneuver('crawl', [Action([0.], [0.1])], initial_speed=3. * CV.MPH_TO_MS)
     self.start(m)
     for _ in range(3):
       m.get_accel(m.initial_speed, True, False, False)
     self.assertTrue(m._recovering)
     for _ in range(100):
-      self.assertGreater(m.get_accel(7. * CV.MPH_TO_MS, True, False, False), 0.)
+      self.assertGreater(m.get_accel(2. * CV.MPH_TO_MS, True, False, False), 0.)
       self.assertFalse(m._run_completed)
-    m.get_accel(SETUP_SPEED, False, False, False)
+    m.get_accel(RECOVERY_SPEED, False, False, False)
     self.assertTrue(m._recovering)
     self.recover(m)
     self.assertTrue(m.finished)
-    self.assertEqual(m.get_accel(SETUP_SPEED, True, False, False), 0.)
+    self.assertEqual(m.get_accel(RECOVERY_SPEED, True, False, False), 0.)
     self.assertFalse(m._run_completed)
 
   def test_interrupt_stop_or_hold_does_not_count(self):
@@ -240,9 +231,8 @@ class TestManeuvers(unittest.TestCase):
 class TestMovingCreepManeuvers(unittest.TestCase):
   def acquire(self):
     m = MovingCreepManeuver('moving', [Action([0.], [6.])], repeat=1, initial_speed=3. * CV.MPH_TO_MS)
-    for speed, seconds in ((SETUP_SPEED, 3.), (m.initial_speed, 2.)):
-      for _ in range(round(seconds / DT_MDL)):
-        m.get_accel(speed, True, False, False)
+    for _ in range(round(2. / DT_MDL)):
+      m.get_accel(m.initial_speed, True, False, False)
     self.assertFalse(m.active)
     self.assertTrue(m._creep_setup)
     self.assertEqual(m.setup_speed, m.creep_speed)
@@ -295,13 +285,13 @@ class TestMovingCreepManeuvers(unittest.TestCase):
           self.assertEqual(m.get_accel(0., False, True, True), 0.)
           self.assertFalse(m._run_completed)
         for _ in range(round(3. / DT_MDL)):
-          m.get_accel(SETUP_SPEED, True, False, False)
+          m.get_accel(RECOVERY_SPEED, True, False, False)
         self.assertTrue(m._run_completed)
         self.assertTrue(m._run_failed)
         self.assertEqual(m._repeated, 1)
         self.assertEqual(m.finished, final_run)
         self.assertFalse(m.stopping_intent)
-        m.get_accel(SETUP_SPEED, True, False, False)
+        m.get_accel(RECOVERY_SPEED, True, False, False)
         self.assertFalse(m._run_completed)
         self.assertFalse(m._run_failed)
 
@@ -320,7 +310,7 @@ class TestMovingCreepManeuvers(unittest.TestCase):
         self.start(m)
         m.get_accel(0.8, True, False, False)
       m.get_accel(0.8, False, False, False)
-      self.assertEqual(m.setup_speed, SETUP_SPEED)
+      self.assertEqual(m.setup_speed, RECOVERY_SPEED)
       self.assertEqual(m._action_frames, 0)
       self.assertEqual(m._acquisition_frames, 0)
       self.assertFalse(m._creep_setup)
@@ -330,7 +320,7 @@ class TestMovingCreepManeuvers(unittest.TestCase):
     def alert(text):
       return SimpleNamespace(which=lambda: 'alertDebug', alertDebug=SimpleNamespace(alertText1=text, alertText2='moving'))
     messages = [alert('Setting up'), alert('Maneuver Active'), alert('Creep test invalid: take control'),
-                alert('Setting up'), alert('Maneuver Active'), alert('Recovering to 8 mph')]
+                alert('Setting up'), alert('Maneuver Active'), alert('Recovering to 3 mph')]
     maneuvers = collect_maneuvers(messages)
     self.assertEqual(len(maneuvers), 1)
     description, runs = maneuvers[0]

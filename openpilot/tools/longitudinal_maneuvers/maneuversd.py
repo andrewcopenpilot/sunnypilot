@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 
-SETUP_SPEED = 8. * CV.MPH_TO_MS
+RECOVERY_SPEED = 3. * CV.MPH_TO_MS
 
 
 @dataclass
@@ -32,12 +32,12 @@ class Maneuver:
   _action_frames: int = 0
   _ready_cnt: int = 0
   _repeated: int = 0
-  _setup_at_speed: bool = False
+  _setup_started: bool = False
   _recovering: bool = False
 
   @property
   def setup_speed(self):
-    return self.initial_speed if self._setup_at_speed else SETUP_SPEED
+    return self.initial_speed
 
   def _speed_control(self, v_ego, target, cruise_standstill, duration):
     ready = abs(v_ego - target) < 0.1 and not cruise_standstill
@@ -45,18 +45,16 @@ class Maneuver:
     return float(np.clip(target - v_ego, -0.5, 0.75)), self._ready_cnt * DT_MDL >= duration
 
   def _setup(self, v_ego, cruise_standstill):
-    accel, ready = self._speed_control(v_ego, self.setup_speed, cruise_standstill, 2. if self._setup_at_speed else 3.)
+    self._setup_started = True
+    accel, ready = self._speed_control(v_ego, self.setup_speed, cruise_standstill, 2.)
     if ready:
-      if self._setup_at_speed:
-        self._active = True
-        self._interrupted = False
-      else:
-        self._setup_at_speed = True
+      self._active = True
+      self._interrupted = False
       self._ready_cnt = 0
     return accel
 
   def _recover(self, v_ego, cruise_standstill):
-    accel, ready = self._speed_control(v_ego, SETUP_SPEED, cruise_standstill, 3.)
+    accel, ready = self._speed_control(v_ego, RECOVERY_SPEED, cruise_standstill, 3.)
     if ready:
       self._run_completed = True
       if self._repeated < self.repeat:
@@ -92,7 +90,7 @@ class Maneuver:
     if self.finished:
       return 0.
     if not long_active:
-      if not self._recovering and (self._active or self._setup_at_speed or self._ready_cnt):
+      if not self._recovering and (self._active or self._setup_started or self._ready_cnt):
         self.reset()
         self._interrupted = True
       self._ready_cnt = 0
@@ -109,7 +107,7 @@ class Maneuver:
     self._action_frames = 0
     self._action_index = 0
     self._ready_cnt = 0
-    self._setup_at_speed = False
+    self._setup_started = False
     self._recovering = False
 
   @property
@@ -171,7 +169,7 @@ class StopManeuver(Maneuver):
 
   def get_accel(self, v_ego: float, long_active: bool, standstill: bool, cruise_standstill: bool, gas_pressed: bool = False, /) -> float:
     self._run_completed = False
-    # A completed hold waits for driver acknowledgement before returning to 8 mph.
+    # A completed hold waits for driver acknowledgement before returning to 3 mph.
     # Gas can override longActive, so latch acknowledgement before checking it.
     if self._complete and (gas_pressed or not long_active):
       self.reset()
@@ -179,7 +177,7 @@ class StopManeuver(Maneuver):
     if self._recovering or self.finished:
       return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
     if not long_active:
-      if self._active or self._failed or self._setup_at_speed or self._ready_cnt:
+      if self._active or self._failed or self._setup_started or self._ready_cnt:
         self._interrupted = True
       self.reset()
       return 0.
@@ -238,7 +236,7 @@ class MovingCreepManeuver(Maneuver):
       return -0.15
     accel = super()._setup(v_ego, cruise_standstill)
     if self._active and not self._creep_setup:
-      # Preserve the 8 mph -> 3 mph setup, then brake toward the entry speed.
+      # Settle at 3 mph, then brake toward the entry speed.
       self._active = False
       self._creep_setup = True
     return accel
@@ -281,8 +279,8 @@ class MovingCreepManeuver(Maneuver):
     self._run_failed = False
 
 
-# Creep-only suite: 8 scenarios, each run twice. Every run first reaches 8 mph,
-# settles at 3 mph for two seconds, and returns to 8 mph after the test.
+# Original creep suite: 8 scenarios, each run twice. Settle at 3 mph for two
+# seconds before each test, then recover to 3 mph after the test.
 LOW_SPEED_MANEUVERS = [
   StopManeuver(
     f"creep stop and hold: {accel:g}m/s^2 from 3mph",
@@ -372,7 +370,8 @@ def main():
       elif isinstance(maneuver, StopManeuver) and maneuver._complete:
         alert_msg.alertDebug.alertText1 = 'Stop complete: tap throttle'
       elif maneuver._recovering:
-        alert_msg.alertDebug.alertText1 = 'Test complete: tap throttle' if sm['carState'].standstill else 'Recovering to 8 mph'
+        alert_msg.alertDebug.alertText1 = ('Test complete: tap throttle' if sm['carState'].standstill
+                                         else f'Recovering to {RECOVERY_SPEED * CV.MS_TO_MPH:.0f} mph')
       elif isinstance(maneuver, StopManeuver) and maneuver.pulse_active:
         alert_msg.alertDebug.alertText1 = f'Maneuver Active: pulse {maneuver.pulse_off_time:0.1f}s'
       elif isinstance(maneuver, StopManeuver) and maneuver._holding:
@@ -395,7 +394,7 @@ def main():
 
     status = None if maneuver is None else (
       id(maneuver), maneuver._repeated, maneuver.active, maneuver._action_index,
-      maneuver._interrupted, maneuver._run_completed, maneuver.finished, maneuver._setup_at_speed, maneuver._recovering,
+      maneuver._interrupted, maneuver._run_completed, maneuver.finished, maneuver._setup_started, maneuver._recovering,
       isinstance(maneuver, StopManeuver) and (maneuver._holding, maneuver.pulse_active, maneuver._failed, maneuver._complete),
       isinstance(maneuver, MovingCreepManeuver) and (maneuver._creep_setup, maneuver._failure),
     )
