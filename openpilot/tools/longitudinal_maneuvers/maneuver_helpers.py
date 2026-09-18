@@ -26,7 +26,7 @@ def collect_maneuvers(messages):
     if msg.which() == 'alertDebug':
       active = 'Maneuver Active' in msg.alertDebug.alertText1
       # Retain the failure marker even though it ends the active interval.
-      if active_prev and msg.alertDebug.alertText1.startswith('Creep test invalid:'):
+      if active_prev and msg.alertDebug.alertText1.startswith(('Creep test invalid:', 'Brake test ended:')):
         maneuvers[-1][1][-1].append(msg)
       if active and not active_prev:
         if msg.alertDebug.alertText2 == description_prev:

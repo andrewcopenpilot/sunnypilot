@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from openpilot.common.constants import CV
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  Action, Maneuver, StopManeuver, MovingCreepManeuver, MANEUVERS, LOW_SPEED_MANEUVERS, STANDARD_MANEUVERS, RECOVERY_SPEED, DT_MDL,
+  Action, Maneuver, StopManeuver, MovingCreepManeuver, LOW_SPEED_MANEUVERS, STANDARD_MANEUVERS, RECOVERY_SPEED, DT_MDL,
 )
 from openpilot.tools.longitudinal_maneuvers.maneuver_helpers import collect_maneuvers
 
@@ -29,17 +29,17 @@ class TestManeuvers(unittest.TestCase):
     self.assertTrue(m._run_completed)
 
   def test_creep_suite(self):
-    self.assertIs(MANEUVERS, STANDARD_MANEUVERS)
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 22)
+    self.assertEqual(len(STANDARD_MANEUVERS), 11)
+    self.assertEqual(sum(m.repeat + 1 for m in STANDARD_MANEUVERS), 22)
     self.assertEqual(sum(m.repeat + 1 for m in LOW_SPEED_MANEUVERS), 16)
-    self.assertEqual(MANEUVERS[:8], LOW_SPEED_MANEUVERS)
-    self.assertTrue(all(m.initial_speed == 3. * CV.MPH_TO_MS for m in MANEUVERS))
-    self.assertTrue(all(m.repeat == 1 for m in MANEUVERS))
+    self.assertEqual(STANDARD_MANEUVERS[:8], LOW_SPEED_MANEUVERS)
+    self.assertTrue(all(m.initial_speed == 3. * CV.MPH_TO_MS for m in STANDARD_MANEUVERS))
+    self.assertTrue(all(m.repeat == 1 for m in STANDARD_MANEUVERS))
     self.assertEqual(RECOVERY_SPEED, 3. * CV.MPH_TO_MS)
 
   def test_suite_with_simulated_vehicle(self):
     completed = 0
-    for template in MANEUVERS:
+    for template in STANDARD_MANEUVERS:
       with self.subTest(maneuver=template.description):
         m = replace(template)
         v = 0.

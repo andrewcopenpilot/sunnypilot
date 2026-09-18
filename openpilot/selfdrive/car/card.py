@@ -122,6 +122,8 @@ class Car:
       self.CI, self.CP, self.CP_SP = CI, CI.CP, CI.CP_SP
       self.RI = RI
 
+    self.CP_SP.longitudinalManeuverMode = self.params.get_bool("LongitudinalManeuverMode")
+
     self.CP.alternativeExperience = 0
     # mads
     set_alternative_experience(self.CP, self.CP_SP, self.params)

@@ -4,7 +4,81 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 <details><summary>Sample snapshot of a report.</summary><img width="600px" src="https://github.com/user-attachments/assets/d18d0c7d-2bde-44c1-8e86-1741ed442ad8"></details>
 
-## Volt creep tuning suite
+## Current Volt default: brake characterization
+
+The default for the Volt ASCM in longitudinal maneuver mode is now **three slow
+brake-command sweeps**, replacing the acceleration suite for this measurement.
+The older suite remains available below as `STANDARD_MANEUVERS`.
+
+Each sweep:
+
+1. Settle at **3 mph for two seconds** using normal control.
+2. Enter active brake mode with **zero brake demand for two seconds**.
+3. Ramp requested EBCM demand from **0 to 12 counts at 0.5 count/second**, then
+   hold the maximum for two seconds. CAN demand is rounded to whole counts;
+   the request is continuous, but the actuator receives discrete levels.
+4. End at the profile limit or if speed leaves **0.4–2.0 m/s (0.9–4.5 mph)**,
+   including a standstill indication. A full uninterrupted profile lasts 28 s;
+   an early speed-bound endpoint is still useful data, not a complete sweep.
+5. The screen says **"Brake test ended"** with the endpoint reason. Normal
+   stopping intent remains asserted until a throttle tap or disengagement.
+   Recover to **3 mph** after acknowledgement, then advance to the next repeat.
+
+During the measured portion, the gas/regen request stays at **−650 Nm**, and the
+EBCM brake mode stays active even at zero counts. The normal near-stop submode
+still changes at 1.5 m/s; the report includes the CAN mode so that change is not
+confused with a brake-demand threshold. PI correction, mode-transition
+thresholds, and the experimental 20% brake-demand scaling do not alter the
+requested sweep. The PI is reset while measuring; normal control handles setup,
+stopping, and recovery. Thus this measures the brake-command path without the
+acceleration controller adjusting the input underneath it.
+
+This is **EBCM demand characterization, not direct hydraulic-pressure control**:
+the EBCM still blends braking internally, and constant commanded gas/regen does
+not guarantee constant delivered axle torque. Keep full CAN rlogs. One command
+count is a protocol unit, not a measured pressure or demonstrated physical
+acceleration increment.
+
+Direct commands require per-drive `LongitudinalManeuverMode`, Volt gateway
+hardware, engaged longitudinal control, valid CAN, and a fresh plan no older than
+250 ms. Stale/invalid commands latch stopping until the test request ends; the
+screen reports **"controller stopped test"** and waits for acknowledgement. Pedal overrides or inactive
+longitudinal control cancel the direct output. Normal driving defaults this path
+off. The old acceleration suite is used on unsupported configurations.
+
+### Plot the sweep, then select hold levels
+
+After fetching the route's full rlogs, run:
+
+```sh
+python openpilot/tools/longitudinal_maneuvers/plot_brake_characterization.py \
+  '/path/to/drive_NAME--*/rlog.zst' --output /path/to/brake_report
+```
+
+The report writes PNG/PDF time traces for requested/sent brake counts, filtered
+and raw speed, acceleration, and raw pressure. `command_response.png` compares
+speed, acceleration, and pressure against **actual CAN brake counts** across
+repeats. Per-trial CSVs also include brake mode, gas/regen request, engagement,
+and pedal state. Endpoint reasons are preserved in `trials.json`.
+
+Use the traces to locate where pressure and deceleration begin changing, then
+check whether that location repeats. Speed integrates acceleration, so a bend
+in speed alone is not a steady-state brake calibration. No automatic inflection
+finder or fitted pressure model is used.
+
+Once the sweep identifies a candidate region, select integer levels around it
+with `MANEUVERS = brake_hold_maneuvers([...])` in `maneuversd.py`. Levels must be
+between 0 and 12 counts. Each level gets **three separate runs**, ramping up at
+the same slow rate and then holding exactly that command for **five seconds**
+if speed remains in bounds. Each starts afresh at 3 mph so the previous level's
+pressure history does not define the next initial condition. Compare pressure,
+acceleration, speed range, and dwell time at matching commands. The hold levels
+are intentionally not selected before the sweep data exists.
+
+## Preserved acceleration comparison suite
+
+The following section describes `STANDARD_MANEUVERS`, not the current Volt
+sweep default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
 
 The suite contains **22 runs: eleven creep scenarios, each repeated twice**. The
 original eight scenarios remain first, with identical active commands, durations,
@@ -139,7 +213,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt sweep, allow three attempts and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
    **Note:** Every run settles at 3 mph before the test and recovers to 3 mph afterward. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 
@@ -153,7 +227,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![image](https://github.com/user-attachments/assets/cfe4c6d9-752f-4b24-b421-4b90a01933dc)
 
-8. Gather the route ID and then run the report generator. The file will be exported to the same directory:
+8. For the current brake sweep, use `plot_brake_characterization.py` above. For the preserved acceleration suite, gather the route ID and run the original report generator. The file will be exported to the same directory:
 
     ```sh
     $ python openpilot/tools/longitudinal_maneuvers/generate_report.py 57048cfce01d9625/0000010e--5b26bc3be7 'Volt creep baseline'

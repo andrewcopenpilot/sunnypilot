@@ -359,6 +359,11 @@ struct CarControl {
 
   driverMonitoringEscalation @18 :Bool; # trigger the car's stock driver monitoring escalation
 
+  # Volt actuator characterization, authorized only in longitudinal maneuver mode.
+  brakeTestActive @19 :Bool;
+  brakeTestCommand @20 :Float32; # EBCM command counts, not pressure
+  brakeTestMonoTime @21 :UInt64; # original plan timestamp; do not refresh on forwarding
+
   cruiseControl @4 :CruiseControl;
   hudControl @5 :HUDControl;
 

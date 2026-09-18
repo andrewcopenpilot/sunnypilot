@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import time
 from numbers import Number
 
 from openpilot.cereal import log
@@ -12,6 +13,7 @@ from openpilot.common.swaglog import cloudlog
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.gm.brake_characterization import forward_brake_test
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
@@ -135,7 +137,21 @@ class Controls(ControlsExt):
 
     # accel PID loop
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, self.CP_SP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
-    actuators.accel = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits))
+    brake_test = forward_brake_test(CC, self.CP, self.CP_SP, CS, long_plan, self.sm.logMonoTime['longitudinalPlan'],
+                                    time.monotonic_ns(), self.sm.valid['longitudinalPlan'])
+    if brake_test is True:
+      # An actuator sweep has no acceleration target; do not integrate its response as an error.
+      self.LoC.reset()
+      self.LoC.long_control_state = car.CarControl.Actuators.LongControlState.pid
+      # Seed the normal stopping ramp from the held demand when the test ends.
+      self.LoC.last_output_accel = -float(CC.brakeTestCommand) / 100.
+      actuators.accel = 0.
+      actuators.longControlState = self.LoC.long_control_state
+    else:
+      actuators.accel = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget,
+                                             long_plan.shouldStop or brake_test is False, pid_accel_limits))
+      if brake_test is False:
+        actuators.longControlState = self.LoC.long_control_state
 
     # Steering PID loop and lateral MPC
     # Reset desired curvature to current to avoid violating the limits on engage

@@ -3,6 +3,7 @@ from opendbc.can import CANPacker
 from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.gm import gmcan
+from opendbc.car.gm.brake_characterization import brake_test_enabled, brake_test_valid
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.gm.values import CAR, DBC, CanBus, CarControllerParams, CruiseButtons
 from opendbc.car.interfaces import CarControllerBase
@@ -42,6 +43,7 @@ class CarController(CarControllerBase):
     self.brake_accel_cmd = 0.     # rate-limited brake-path accel command, m/s^2
     self.gas_cmd = 0.             # rate-limited torque-mode GasRegenCmd, Nm
     self.stock_creep_active = False
+    self.brake_test_failed = False
 
   def stock_creep_weight(self, CS, stopping):
     # Hold/resume has additional OEM states; retain the existing stop/start sequence for now.
@@ -152,13 +154,30 @@ class CarController(CarControllerBase):
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
-        if not CC.longActive:
+        test_requested = CC.enabled and CC.brakeTestActive and brake_test_enabled(self.CP, self.CP_SP)
+        if not test_requested or not CC.longActive or CS.out.gasPressed or CS.out.brakePressed:
+          self.brake_test_failed = False
+        if not CC.longActive or (test_requested and (CS.out.gasPressed or CS.out.brakePressed)):
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = 0
           self.brake_mode = False
           self.brake_accel_cmd = 0.
           self.stock_creep_active = False
+        elif test_requested:
+          if not self.brake_test_failed and not stopping and brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out):
+            # Characterize the EBCM with fixed gas/regen and direct counts. Bypass PI
+            # mapping, creep scaling and mode selection only for this explicit test.
+            self.brake_mode = True
+            self.stock_creep_active = True  # retain active brake mode even at zero counts
+            self.gas_cmd = self.apply_gas = self.params.MAX_ACC_REGEN
+            self.apply_brake = int(round(CC.brakeTestCommand))
+            self.brake_accel_cmd = -self.apply_brake / self.params.BRAKE_COUNTS_PER_MPS2
+          else:
+            # A stale/invalid test must not continue a held command or resume into torque.
+            self.brake_test_failed = True
+            stopping = True
+            self.apply_gas, self.apply_brake = self.stock_gas_brake(-2., CS, True)
         else:
           # stock ASCM two-mode logic (see CarControllerParams)
           self.apply_gas, self.apply_brake = self.stock_gas_brake(actuators.accel, CS, stopping)
@@ -235,6 +254,8 @@ class CarController(CarControllerBase):
         can_sends.append(gmcan.create_pscm_status(self.packer_pt, CanBus.CAMERA, CS.pscm_status))
 
     new_actuators = actuators.as_builder()
+    if self.brake_test_failed:
+      new_actuators.longControlState = LongCtrlState.stopping
     new_actuators.torque = self.apply_torque_last / self.params.STEER_MAX
     new_actuators.torqueOutputCan = self.apply_torque_last
     new_actuators.gas = self.apply_gas

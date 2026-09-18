@@ -363,6 +363,7 @@ struct CarParamsSP @0x80ae746ee2596b11 {
   pcmCruiseSpeed @3 :Bool;
   intelligentCruiseButtonManagementAvailable @4 :Bool;
   enableGasInterceptor @5 :Bool;
+  longitudinalManeuverMode @6 :Bool; # latched per drive, default off
 
   neuralNetworkLateralControl @2 :NeuralNetworkLateralControl;
 

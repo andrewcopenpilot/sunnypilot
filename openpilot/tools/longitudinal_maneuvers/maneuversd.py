@@ -2,6 +2,9 @@
 import numpy as np
 from dataclasses import dataclass
 
+from opendbc.car.gm.brake_characterization import (
+  BRAKE_TEST_MAX, BRAKE_TEST_MIN_SPEED, BRAKE_TEST_MAX_SPEED, brake_test_enabled,
+)
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 
@@ -279,6 +282,86 @@ class MovingCreepManeuver(Maneuver):
     self._run_failed = False
 
 
+@dataclass
+class BrakeCharacterizationManeuver(Maneuver):
+  """Slow EBCM demand sweep, or ramp to a chosen level and hold it."""
+  max_counts: float = BRAKE_TEST_MAX
+  counts_per_second: float = 0.5
+  baseline_seconds: float = 2.
+  hold_seconds: float = 2.
+  _test_frames: int = 0
+  _brake_counts: float = 0.
+  _end_reason: str = ''
+  _awaiting_ack: bool = False
+
+  def __post_init__(self):
+    assert 0. <= self.max_counts <= BRAKE_TEST_MAX and self.max_counts == int(self.max_counts)
+    assert 0. < self.counts_per_second <= 0.5
+    assert self.baseline_seconds >= 0. and self.hold_seconds >= 0.
+    assert self.duration <= 40.
+
+  @property
+  def duration(self):
+    return self.baseline_seconds + self.max_counts / self.counts_per_second + self.hold_seconds
+
+  @property
+  def stopping_intent(self):
+    return self._awaiting_ack
+
+  @property
+  def brake_test_active(self):
+    return self.active and not self._awaiting_ack and not self._recovering
+
+  @property
+  def brake_counts(self):
+    return self._brake_counts if self.brake_test_active else 0.
+
+  def _end(self, reason):
+    self._active = False
+    self._awaiting_ack = True
+    self._end_reason = reason
+    self._brake_counts = 0.
+    return -0.3
+
+  def _step(self):
+    elapsed = self._test_frames * DT_MDL
+    self._test_frames += 1
+    self._brake_counts = float(np.clip((elapsed - self.baseline_seconds) * self.counts_per_second, 0., self.max_counts))
+    if elapsed >= self.duration:
+      return self._end('profile complete')
+    return 0.  # No acceleration target during direct actuator characterization.
+
+  def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
+    self._run_completed = False
+    if self._awaiting_ack:
+      if gas_pressed or not long_active:
+        self._awaiting_ack = False
+        self._recovering = True
+        self._ready_cnt = 0
+      else:
+        return -0.3
+    if long_active and self.active:
+      if standstill or cruise_standstill or v_ego <= BRAKE_TEST_MIN_SPEED:
+        return self._end('lower speed bound')
+      if v_ego >= BRAKE_TEST_MAX_SPEED:
+        return self._end('upper speed bound')
+    return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
+
+  def reset(self):
+    super().reset()
+    self._test_frames = 0
+    self._brake_counts = 0.
+    self._end_reason = ''
+    self._awaiting_ack = False
+
+
+def brake_hold_maneuvers(levels):
+  # Fill levels from the sweep results; each level gets its own fresh 3 mph start.
+  return [BrakeCharacterizationManeuver(f"brake characterization: hold {level:g} counts for 5s", [],
+                                       repeat=2, initial_speed=3. * CV.MPH_TO_MS, max_counts=level, hold_seconds=5.)
+          for level in levels]
+
+
 # Original creep suite: 8 scenarios, each run twice. Settle at 3 mph for two
 # seconds before each test, then recover to 3 mph after the test.
 LOW_SPEED_MANEUVERS = [
@@ -322,23 +405,31 @@ MOVING_CREEP_MANEUVERS = [
   ], repeat=1, initial_speed=3. * CV.MPH_TO_MS),
 ]
 STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + MOVING_CREEP_MANEUVERS
-MANEUVERS = STANDARD_MANEUVERS
+BRAKE_CHARACTERIZATION_MANEUVERS = [
+  BrakeCharacterizationManeuver("brake characterization: 0 to 12 counts at 0.5 count/s", [],
+                               repeat=2, initial_speed=3. * CV.MPH_TO_MS),
+]
+# First locate the response change in the sweep logs. Then use brake_hold_maneuvers([...])
+# with measured levels around it. Keep the old acceleration suite available for comparisons.
+MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS
 
 
 def main():
-  from openpilot.cereal import messaging
+  from openpilot.cereal import messaging, custom
+  from opendbc.car import structs
   from openpilot.common.params import Params
   from openpilot.common.swaglog import cloudlog
   from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
 
   params = Params()
   cloudlog.info("maneuversd is waiting for CarParams")
-  params.get("CarParams", block=True)
+  CP = messaging.log_from_bytes(params.get("CarParams", block=True), structs.CarParams)
+  CP_SP = messaging.log_from_bytes(params.get("CarParamsSP", block=True), custom.CarParamsSP)
 
-  sm = messaging.SubMaster(['carState', 'carControl', 'controlsState', 'selfdriveState', 'modelV2'], poll='modelV2')
+  sm = messaging.SubMaster(['carState', 'carControl', 'carOutput', 'controlsState', 'selfdriveState', 'modelV2'], poll='modelV2')
   pm = messaging.PubMaster(['longitudinalPlan', 'longitudinalPlanSP', 'driverAssistance', 'alertDebug'])
 
-  maneuvers = iter(MANEUVERS)
+  maneuvers = iter(MANEUVERS if brake_test_enabled(CP, CP_SP) else STANDARD_MANEUVERS)
   maneuver = None
   previous_status = None
 
@@ -360,10 +451,18 @@ def main():
 
     if maneuver is not None:
       run_number = maneuver._repeated + 1
+      if (isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.active and
+          sm['carControl'].longActive and sm['carControl'].brakeTestActive and
+          sm['carOutput'].actuatorsOutput.longControlState == structs.CarControl.Actuators.LongControlState.stopping):
+        maneuver._end('controller stopped test')
       accel = maneuver.get_accel(v_ego, sm['carControl'].longActive, sm['carState'].standstill,
                                  sm['carState'].cruiseState.standstill, sm['carState'].gasPressed)
 
-      if isinstance(maneuver, MovingCreepManeuver) and maneuver.stopping_intent:
+      if isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.stopping_intent:
+        alert_msg.alertDebug.alertText1 = f'Brake test ended: {maneuver._end_reason}; tap throttle or disengage'
+      elif isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.brake_test_active:
+        alert_msg.alertDebug.alertText1 = f'Maneuver Active: brake {maneuver.brake_counts:.1f} counts'
+      elif isinstance(maneuver, MovingCreepManeuver) and maneuver.stopping_intent:
         alert_msg.alertDebug.alertText1 = f'Creep test invalid: tap throttle or disengage ({maneuver._failure})'
       elif isinstance(maneuver, StopManeuver) and maneuver._failed:
         alert_msg.alertDebug.alertText1 = 'Stop timed out: take control'
@@ -397,6 +496,7 @@ def main():
       maneuver._interrupted, maneuver._run_completed, maneuver.finished, maneuver._setup_started, maneuver._recovering,
       isinstance(maneuver, StopManeuver) and (maneuver._holding, maneuver.pulse_active, maneuver._failed, maneuver._complete),
       isinstance(maneuver, MovingCreepManeuver) and (maneuver._creep_setup, maneuver._failure),
+      isinstance(maneuver, BrakeCharacterizationManeuver) and (maneuver._awaiting_ack, maneuver._end_reason),
     )
     if status != previous_status:
       cloudlog.info("longitudinal maneuver: %s | %s", alert_msg.alertDebug.alertText1, alert_msg.alertDebug.alertText2)
@@ -404,7 +504,10 @@ def main():
     pm.send('alertDebug', alert_msg)
 
     longitudinalPlan.aTarget = accel
-    stopping_intent = isinstance(maneuver, (StopManeuver, MovingCreepManeuver)) and maneuver.stopping_intent
+    if isinstance(maneuver, BrakeCharacterizationManeuver):
+      longitudinalPlan.brakeTestActive = maneuver.brake_test_active
+      longitudinalPlan.brakeTestCommand = maneuver.brake_counts
+    stopping_intent = isinstance(maneuver, (StopManeuver, MovingCreepManeuver, BrakeCharacterizationManeuver)) and maneuver.stopping_intent
     pulse_active = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
     # a creep pulse mimics the model: stop flag off at standstill with a slightly positive target
     longitudinalPlan.shouldStop = stopping_intent or (should_stop(v_ego, accel) and not pulse_active)
