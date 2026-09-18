@@ -18,7 +18,6 @@ from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
-from opendbc.car.gm.brake_characterization import configure_brake_test_safety
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
@@ -124,7 +123,6 @@ class Car:
       self.RI = RI
 
     self.CP_SP.longitudinalManeuverMode = self.params.get_bool("LongitudinalManeuverMode")
-    configure_brake_test_safety(self.CP, self.CP_SP)
 
     self.CP.alternativeExperience = 0
     # mads

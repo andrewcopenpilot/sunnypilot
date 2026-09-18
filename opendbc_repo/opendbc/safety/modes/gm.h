@@ -35,7 +35,6 @@ typedef enum {
 static GmHardware gm_hw = GM_ASCM;
 static bool gm_pcm_cruise = false;
 static bool gm_non_acc = false;
-static bool gm_signed_brake_test = false;
 
 static void gm_rx_hook(const CANPacket_t *msg) {
   const int GM_STANDSTILL_THRSLD = 10;  // 0.311kph
@@ -127,10 +126,10 @@ static bool gm_tx_hook(const CANPacket_t *msg) {
     const int raw = ((msg->data[0] & 0xFU) << 8) + msg->data[1];
     const int request = to_signed(raw, 12);
     if (request > 0) {
-      // Signed EBCM acceleration request, not propulsion torque. This allowance
-      // is separate from ordinary brake-magnitude limits and defaults off.
+      // Signed acceleration targets use the shared GM brake-command protocol.
+      // Keep positive requests bounded separately from braking magnitude.
       const int mode = msg->data[0] >> 4;
-      tx = gm_signed_brake_test && get_longitudinal_allowed() && (mode == 0xA) && (request <= 14);
+      tx = get_longitudinal_allowed() && (mode == 0xA) && (request <= 14);
     } else if (longitudinal_brake_checks(-request, *gm_long_limits)) {
       tx = false;
     }
@@ -180,7 +179,6 @@ static bool gm_tx_hook(const CANPacket_t *msg) {
 static safety_config gm_init(uint16_t param) {
   const uint16_t GM_PARAM_HW_CAM = 1;
   const uint16_t GM_PARAM_EV = 4;
-  const uint16_t GM_PARAM_SIGNED_BRAKE_TEST = 8;
 
   // common safety checks assume unscaled integer values
   static const int GM_GAS_TO_CAN = 8;  // 1 / 0.125
@@ -263,7 +261,6 @@ static safety_config gm_init(uint16_t param) {
   }
 
   const bool gm_ev = GET_FLAG(param, GM_PARAM_EV);
-  gm_signed_brake_test = (gm_hw == GM_ASCM) && gm_ev && !gm_non_acc && GET_FLAG(param, GM_PARAM_SIGNED_BRAKE_TEST);
   if (gm_ev) {
     SET_RX_CHECKS(gm_ev_rx_checks, ret);
   }

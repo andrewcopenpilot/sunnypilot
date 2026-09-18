@@ -2,9 +2,9 @@ import unittest
 from types import SimpleNamespace
 
 from opendbc.car import structs
-from opendbc.car.gm.brake_characterization import brake_test_enabled, forward_brake_test, configure_brake_test_safety
+from opendbc.car.gm.brake_characterization import brake_test_enabled, forward_brake_test
 from opendbc.car.gm.tests import test_longitudinal as fixtures
-from opendbc.car.gm.values import CAR, GMSafetyFlags
+from opendbc.car.gm.values import CAR
 
 
 class TestBrakeCharacterizationCAN(unittest.TestCase):
@@ -175,38 +175,6 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     for _ in range(10):
       mode, demand = self.update(3.)
     self.assertEqual((mode, demand), (0xa, -24.))
-
-
-class TestBrakeTestSafetyConfig(unittest.TestCase):
-  def test_scope_and_clearing_on_next_drive(self):
-    for car, network, long_control, expected in (
-      (CAR.CHEVROLET_VOLT, 'gateway', True, True),
-      (CAR.CHEVROLET_VOLT, 'fwdCamera', True, False),
-      (CAR.CHEVROLET_VOLT, 'gateway', False, False),
-      (CAR.CHEVROLET_MALIBU, 'gateway', True, False),
-    ):
-      controller = fixtures.make_controller(car, network)
-      cp, cp_sp = controller.CP, controller.CP_SP
-      cp.openpilotLongitudinalControl = long_control
-      config = cp.init('safetyConfigs', 1)[0]
-      config.safetyModel = 'gm'
-      config.safetyParam = int(GMSafetyFlags.EV)
-      cp_sp.longitudinalManeuverMode = True
-      configure_brake_test_safety(cp, cp_sp)
-      self.assertEqual(bool(config.safetyParam & GMSafetyFlags.SIGNED_BRAKE_TEST), expected)
-      self.assertTrue(config.safetyParam & GMSafetyFlags.EV)
-      cp_sp.longitudinalManeuverMode = False
-      configure_brake_test_safety(cp, cp_sp)
-      self.assertEqual(config.safetyParam, GMSafetyFlags.EV)
-
-  def test_other_safety_model_untouched(self):
-    controller = fixtures.make_controller()
-    controller.CP_SP.longitudinalManeuverMode = True
-    config = controller.CP.init('safetyConfigs', 1)[0]
-    config.safetyModel = 'toyota'
-    config.safetyParam = 255
-    configure_brake_test_safety(controller.CP, controller.CP_SP)
-    self.assertEqual(config.safetyParam, 255)
 
 
 class TestBrakeTestForwarding(unittest.TestCase):

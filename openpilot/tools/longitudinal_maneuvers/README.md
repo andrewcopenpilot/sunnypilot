@@ -34,13 +34,16 @@ experiment additionally needs the matching rebuilt Panda firmware. This prebuilt
 branch includes it in `panda/board/obj/panda_h7.bin.signed`; pulling source alone
 does not compile firmware. After deploying the binary and restarting, pandad
 automatically flashes it when the firmware signature differs. The DBC and CAN
-checksum already support signed values. A per-drive safety flag is set only
-for Volt gateway longitudinal maneuver mode. Positive demand is permitted only
-in 0xA, with longitudinal actuation allowed, and at most **+14 counts**. The
-existing negative-demand brake limit is unchanged. Camera configurations and
-normal drives do not receive this allowance. Panda independently checks the
-mode, sign, bounds and actuation permission; the test's speed/freshness guards
-remain in host control code.
+checksum already support signed values. Panda accepts positive signed demand in
+**0xA**, with longitudinal actuation allowed, and at most **+14 counts**, through
+the common GM brake-command check. There is no test-specific, EV, or ASCM gate.
+The existing negative-demand brake limit and transmit allowlists are unchanged:
+configurations without brake-message transmit permission still cannot send it.
+Panda independently checks message/bus permission, mode, sign, bounds and
+actuation permission.
+Direct-command generation still requires Volt maneuver mode in the host; its
+speed/freshness guards remain active. Normal driving control is unchanged and
+does not yet generate positive EBCM requests.
 
 Look for pressure before the positive step, partial versus complete pressure
 reduction, resulting acceleration, and whether the final zero request arrests
