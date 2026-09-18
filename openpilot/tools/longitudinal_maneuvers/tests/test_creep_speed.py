@@ -8,7 +8,7 @@ from openpilot.common.constants import CV
 from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
 from openpilot.selfdrive.controls.lib.longcontrol import long_control_state_trans
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  CREEP_SPEED_MANEUVERS, MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS, CreepSpeedManeuver,
+  CREEP_SPEED_MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS, CreepSpeedManeuver,
   Maneuver, StopManeuver, RECOVERY_SPEED, DT_MDL, maneuver_should_stop,
 )
 
@@ -21,10 +21,9 @@ class TestCreepSpeed(unittest.TestCase):
     self.assertEqual(m._action_frames, 0)
 
   def test_default_profiles_and_all_repeats(self):
-    self.assertIs(MANEUVERS, CREEP_SPEED_MANEUVERS)
-    self.assertEqual(len(MANEUVERS), 6)
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 12)
-    for i, template in enumerate(MANEUVERS):
+    self.assertEqual(len(CREEP_SPEED_MANEUVERS), 6)
+    self.assertEqual(sum(m.repeat + 1 for m in CREEP_SPEED_MANEUVERS), 12)
+    for i, template in enumerate(CREEP_SPEED_MANEUVERS):
       self.assertAlmostEqual(min(template.speed_points) * CV.MS_TO_MPH, (1.5, 1., .5)[i % 3])
       m = replace(template)
       # Ideal acceleration-following fixture exercises scheduling, not real vehicle stability.
@@ -46,7 +45,7 @@ class TestCreepSpeed(unittest.TestCase):
       self.assertAlmostEqual(v, RECOVERY_SPEED, delta=.02)
 
   def test_speed_and_feedforward_are_continuous_and_bounded(self):
-    for m in MANEUVERS:
+    for m in CREEP_SPEED_MANEUVERS:
       for i, t in enumerate(m.time_points):
         speed, _ = m.reference(t)
         self.assertAlmostEqual(speed, m.speed_points[i])
@@ -58,7 +57,7 @@ class TestCreepSpeed(unittest.TestCase):
         self.assertLessEqual(abs(accel), .1 + 1e-9)
 
   def test_profile_keeps_advancing_when_speed_never_reaches_target(self):
-    m = replace(MANEUVERS[2])
+    m = replace(CREEP_SPEED_MANEUVERS[2])
     self.start(m)
     for _ in range(int(m.time_points[-1] / DT_MDL) + 2):
       m.get_accel(RECOVERY_SPEED, True, False, False)
@@ -66,7 +65,7 @@ class TestCreepSpeed(unittest.TestCase):
     self.assertFalse(m._failure)
 
   def test_stop_heuristic_bypass_is_limited_to_moving_test(self):
-    m = replace(MANEUVERS[2])
+    m = replace(CREEP_SPEED_MANEUVERS[2])
     self.assertTrue(should_stop(.2, 0.))
     self.assertTrue(maneuver_should_stop(m, .2, 0.))  # Setup retains normal behavior.
     self.start(m)
@@ -79,7 +78,7 @@ class TestCreepSpeed(unittest.TestCase):
     self.assertTrue(maneuver_should_stop(m, .2, 0.))
 
   def test_controller_stays_in_pid_until_explicit_test_abort(self):
-    m = replace(MANEUVERS[2])
+    m = replace(CREEP_SPEED_MANEUVERS[2])
     self.start(m)
     state = structs.CarControl.Actuators.LongControlState.pid
     cp_sp = SimpleNamespace(enableGasInterceptor=False)
@@ -95,7 +94,7 @@ class TestCreepSpeed(unittest.TestCase):
 
   def test_guards_override_bypass_and_failure_requires_acknowledgement(self):
     for speed, standstill, cruise in ((.09, False, False), (.2, True, False), (.2, False, True), (1.81, False, False)):
-      m = replace(MANEUVERS[2])
+      m = replace(CREEP_SPEED_MANEUVERS[2])
       self.start(m)
       self.assertEqual(m.get_accel(speed, True, standstill, cruise), -.3)
       self.assertTrue(m.stopping_intent)
@@ -113,7 +112,7 @@ class TestCreepSpeed(unittest.TestCase):
 
   def test_pedal_override_or_disengagement_restarts_profile(self):
     for gas, active in ((True, True), (False, False)):
-      m = replace(MANEUVERS[2])
+      m = replace(CREEP_SPEED_MANEUVERS[2])
       self.start(m)
       for _ in range(20):
         m.get_accel(1., True, False, False)

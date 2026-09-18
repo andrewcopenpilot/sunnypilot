@@ -130,6 +130,7 @@ class GMSafetyFlags(IntFlag):
   HW_CAM = 1
   HW_CAM_LONG = 2
   EV = 4
+  SIGNED_BRAKE_TEST = 8  # positive EBCM requests, Volt maneuver mode only
 
 
 class Footnote(Enum):

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from opendbc.car.gm.brake_characterization import BRAKE_TEST_MAX
+from opendbc.car.gm.brake_characterization import BRAKE_TEST_MIN, BRAKE_TEST_MAX
 
 
 def extract(events):
@@ -101,8 +101,8 @@ def write_report(arrays, trials, output):
     # Plot all samples inside the measured interval, including any terminal stop command.
     t, requested, _, _, sent, mode, speed, accel, raw, _, _, pressure, gas, release = values.T
     fig, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
-    axes[0].plot(t, requested, label='Requested count ramp')
-    axes[0].step(t, sent, where='post', label='Actual CAN counts')
+    axes[0].plot(t, -requested, label='Requested signed counts')
+    axes[0].step(t, -sent, where='post', label='Actual signed CAN counts')
     axes[0].step(t, mode, where='post', label='CAN brake mode', alpha=0.5, ls=':')
     axes[0].set_ylabel('Counts / mode')
     axes[1].plot(t, speed, label='Filtered speed')
@@ -124,14 +124,15 @@ def write_report(arrays, trials, output):
     # Only valid direct-command samples belong on the command-response plot.
     valid_mode = np.isin(mode, (10, 11)) | ((mode == 1) & (sent == 0) & (release == 1))
     measured = ((values[:, 2] == 1) & (values[:, 3] == 1) & valid_mode &
-                (sent >= 0) & (sent <= BRAKE_TEST_MAX) & (values[:, 9] == 0) & (values[:, 10] == 0))
+                (sent >= BRAKE_TEST_MIN) & (sent <= BRAKE_TEST_MAX) & (values[:, 9] == 0) & (values[:, 10] == 0))
     for ax, column in zip(response_axes, (6, 7, 11), strict=True):
-      ax.plot(sent[measured], values[measured, column], '.-', ms=2, lw=0.7, label=f'Trial {i}')
-    print(f"Trial {i}: {t[-1]:.2f}s, max sent {sent.max():g} counts, gas/regen {np.nanmin(gas):g}..{np.nanmax(gas):g} Nm | {trial['outcome']}")
+      ax.plot(-sent[measured], values[measured, column], '.-', ms=2, lw=0.7, label=f'Trial {i}')
+    print(f"Trial {i}: {t[-1]:.2f}s, signed CAN {-sent.max():g}..{-sent.min():g} counts, " +
+          f"gas/regen {np.nanmin(gas):g}..{np.nanmax(gas):g} Nm | {trial['outcome']}")
   for ax, label in zip(response_axes, ('Speed (m/s)', 'Acceleration (m/s²)', 'Pressure signal (raw)'), strict=True):
     ax.set_ylabel(label)
     ax.legend()
-  response_axes[-1].set_xlabel('Actual EBCM brake command (counts)')
+  response_axes[-1].set_xlabel('Signed EBCM request (counts; negative = deceleration)')
   response.suptitle('Brake response by command — transient sweeps, not a steady-state calibration')
   response.tight_layout()
   response.savefig(output / 'command_response.png', dpi=140)

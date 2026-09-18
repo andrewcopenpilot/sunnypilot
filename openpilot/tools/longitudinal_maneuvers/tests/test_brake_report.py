@@ -17,7 +17,7 @@ def event(kind, timestamp):
   return msg
 
 
-def synthetic_events(inactive_release=False):
+def synthetic_events(inactive_release=False, signed=False):
   """Small artificial log fixture; deliberately not a vehicle-response model."""
   controller = make_controller()
   packer = CANPacker('gm_global_a_chassis')
@@ -31,6 +31,8 @@ def synthetic_events(inactive_release=False):
       break
     release = inactive_release and tick >= 80
     count = 0. if release else max(0., (tick * .05 - 2.) * .5)
+    if signed:
+      count = (14., 0., -14.)[min(tick // 40, 2)]
     m = event('carState', t)
     m.carState.vEgo = 1.34 - .015 * (tick * .05) ** 2
     m.carState.vEgoRaw = m.carState.vEgo
@@ -45,7 +47,8 @@ def synthetic_events(inactive_release=False):
     m = event('carOutput', t)
     m.carOutput.actuatorsOutput.gas = -650.
     yield m
-    packet = gmcan.create_friction_brake_command(packer, 1, round(count), tick % 4, True, not release, False, controller.CP, brake_active=not release)
+    packet = gmcan.create_friction_brake_command(packer, 1, round(count), tick % 4, True, not release and not signed,
+                                                 False, controller.CP, brake_active=not release)
     m = log.Event.new_message()
     m.logMonoTime = int(t * 1e9)
     can = m.init('sendcan', 1)[0]
@@ -55,7 +58,7 @@ def synthetic_events(inactive_release=False):
     m.logMonoTime = int(t * 1e9)
     can = m.init('can', 1)[0]
     can.address, can.src = 0x170, 2
-    can.dat = b'\x00\x00' + int(round(count) * 100).to_bytes(2, 'big') + bytes(4)
+    can.dat = b'\x00\x00' + int(max(round(count), 0) * 100).to_bytes(2, 'big') + bytes(4)
     yield m
 
 
@@ -72,6 +75,14 @@ class TestBrakeReport(unittest.TestCase):
     self.assertTrue(np.all(values[:, 12] == -650.))
     self.assertEqual(values[0, 0], 0.)
     self.assertLess(values[-1, 0], 6.)
+
+  def test_signed_requests_are_decoded_without_unsigned_wrap(self):
+    arrays, trials = extract(synthetic_events(signed=True))
+    values = trial_samples(arrays, trials[0])
+    np.testing.assert_array_equal(values[:, 4], np.repeat((14., 0., -14.), 40))
+    np.testing.assert_array_equal(values[:, 1], values[:, 4])
+    self.assertTrue(np.all(values[:, 5] == 0xA))
+    self.assertTrue(np.all(values[:, 12] == -650.))
 
   def test_inactive_zero_remains_in_measured_interval(self):
     arrays, trials = extract(synthetic_events(inactive_release=True))

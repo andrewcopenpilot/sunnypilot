@@ -4,9 +4,58 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 <details><summary>Sample snapshot of a report.</summary><img width="600px" src="https://github.com/user-attachments/assets/d18d0c7d-2bde-44c1-8e86-1741ed442ad8"></details>
 
-## Current Volt default: moving-creep speed tracking
+## Current Volt default: signed EBCM acceleration requests
 
-The Volt ASCM default is **six speed profiles, two runs each: 12 attempts**.
+`SIGNED_BRAKE_MANEUVERS` runs three profiles twice each (six attempts), all in
+**0xA**. The sign below is the actual CAN sign: negative requests deceleration,
+positive requests acceleration. These are protocol counts, not measured pressure
+or a demonstrated physical acceleration increment. The experiment measures the
+EBCM's response; it does not assume positive demand must release all pressure.
+
+Each attempt settles at 3 mph for two seconds, sends -5 counts for two seconds,
+then follows one row. Intermediate phases are timed, with no stability gate.
+Gas/regen stays at -650 Nm throughout measurement. Production acceleration PI,
+brake scaling and brake/torque selection are bypassed during direct commands.
+
+| ID | Signed request sequence | Measurement duration, including -5 baseline |
+|---|---|---:|
+| S01 | -14 (4 s) → 0 (3 s) → +14 (4 s) → 0 (4 s) | 17 s |
+| S02 | -14 (4 s) → 0 (3 s) → +7 (4 s) → 0 (4 s) | 17 s |
+| S03 | -14 (4 s) → 0 (3 s) → +4 (2 s) → +8 (2 s) → +14 (2 s) → 0 (4 s) | 19 s |
+
+Total measured time is 106 seconds, plus setup, stopping, acknowledgement and
+recovery. Existing direct-test guards remain: 0.4–2.0 m/s, no standstill, valid
+CAN and commands no older than 250 ms. Endpoint stopping and the throttle-tap
+acknowledgement are unchanged. Accelerator interruption restarts the unfinished
+attempt. Only the selected suite runs; previous suites are preserved below.
+
+Enable `LongitudinalManeuverMode` as before and start a new drive. The signed
+experiment additionally needs the matching rebuilt Panda firmware. This prebuilt
+branch includes it in `panda/board/obj/panda_h7.bin.signed`; pulling source alone
+does not compile firmware. After deploying the binary and restarting, pandad
+automatically flashes it when the firmware signature differs. The DBC and CAN
+checksum already support signed values. A per-drive safety flag is set only
+for Volt gateway longitudinal maneuver mode. Positive demand is permitted only
+in 0xA, with longitudinal actuation allowed, and at most **+14 counts**. The
+existing negative-demand brake limit is unchanged. Camera configurations and
+normal drives do not receive this allowance. Panda independently checks the
+mode, sign, bounds and actuation permission; the test's speed/freshness guards
+remain in host control code.
+
+Look for pressure before the positive step, partial versus complete pressure
+reduction, resulting acceleration, and whether the final zero request arrests
+acceleration while retaining 0xA. Compare actual axle torque and AxleTorqueMin;
+fixed commanded torque does not ensure fixed delivered torque. A run with no
+initial pressure or a speed-bound endpoint does not establish successful tracking.
+
+Use `plot_brake_characterization.py` below. Plots and UI show the signed CAN
+convention. For compatibility, `brakeTestCommand`, `actuatorsOutput.brake`, and
+CSV `requested_counts`/`sent_counts` retain the legacy positive-for-braking
+convention: **negate those fields to obtain signed acceleration counts**.
+
+## Preserved moving-creep speed tracking
+
+The preserved `CREEP_SPEED_MANEUVERS` suite is **six speed profiles, two runs each: 12 attempts**.
 These exercise normal longitudinal control, including its acceleration PI and
 brake/torque transitions. They use no direct brake-count or mode override.
 
@@ -57,7 +106,8 @@ recovers and advances. Accelerator override or disengagement during an unfinishe
 profile restarts that attempt from setup. Disengage before turning around.
 
 Use the existing `LongitudinalManeuverMode` parameter and instructions below.
-Only this selected suite runs. To repeat the previous brake-exit experiment, set
+To select these speed profiles, set `MANEUVERS = CREEP_SPEED_MANEUVERS`.
+To repeat the previous brake-exit experiment, set
 `MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS` in `maneuversd.py`.
 
 ## Preserved brake characterization suite
@@ -161,7 +211,8 @@ separately and exclude fallback stopping commands after a guard triggers.
 
 To select a suite, set `MANEUVERS` to:
 
-- `CREEP_SPEED_MANEUVERS`: the current six speed-tracking profiles, two runs each.
+- `SIGNED_BRAKE_MANEUVERS`: the current signed-request experiment, three profiles, two runs each.
+- `CREEP_SPEED_MANEUVERS`: the preserved six speed-tracking profiles, two runs each.
 - `BRAKE_CHARACTERIZATION_MANEUVERS`: the six zero-demand brake-exit profiles, two runs each.
 
 - `BRAKE_RELEASE_MANEUVERS`: the previous 12 active-mode release profiles, two runs each.
@@ -174,7 +225,7 @@ Only the selected suite runs.
 ## Preserved acceleration comparison suite
 
 The following section describes `STANDARD_MANEUVERS`, not the current Volt
-speed-tracking default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
+signed-request default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
 
 The suite contains **22 runs: eleven creep scenarios, each repeated twice**. The
 original eight scenarios remain first, with identical active commands, durations,

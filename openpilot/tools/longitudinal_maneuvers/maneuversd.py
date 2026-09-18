@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 
 from opendbc.car.gm.brake_characterization import (
-  BRAKE_TEST_MAX, BRAKE_TEST_MIN_SPEED, BRAKE_TEST_MAX_SPEED, brake_test_enabled,
+  BRAKE_TEST_MIN, BRAKE_TEST_MAX, BRAKE_TEST_MIN_SPEED, BRAKE_TEST_MAX_SPEED, brake_test_enabled,
 )
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
@@ -462,6 +462,7 @@ class BrakeCharacterizationManeuver(Maneuver):
         self._ready_cnt = 0
       else:
         return -0.3
+    long_active = long_active and not gas_pressed
     if long_active and self.active:
       if standstill or cruise_standstill or v_ego <= BRAKE_TEST_MIN_SPEED:
         return self._end('lower speed bound')
@@ -476,6 +477,50 @@ class BrakeCharacterizationManeuver(Maneuver):
     self._brake_release = False
     self._end_reason = ''
     self._awaiting_ack = False
+
+
+@dataclass
+class SignedBrakeManeuver(BrakeCharacterizationManeuver):
+  """Timed signed EBCM acceleration requests, staying in ordinary mode 0xA."""
+  request_steps: tuple[tuple[float, float], ...] = ((-14., 4.), (0., 3.), (14., 4.), (0., 4.))
+
+  def __post_init__(self):
+    assert self.request_steps
+    assert all(np.isfinite(request) and -BRAKE_TEST_MAX <= request <= -BRAKE_TEST_MIN and request == int(request)
+               and np.isfinite(seconds) and seconds >= DT_MDL for request, seconds in self.request_steps)
+    assert self.duration <= 90.
+    self.start_counts = -self.request_steps[0][0]
+    self._brake_counts = self.start_counts
+
+  @property
+  def duration(self):
+    return sum(seconds for _, seconds in self.request_steps)
+
+  def _step(self):
+    elapsed = self._test_frames * DT_MDL
+    self._test_frames += 1
+    end = 0.
+    for request, seconds in self.request_steps:
+      end += seconds
+      if elapsed < end:
+        # Existing brakeTestCommand uses positive-for-braking counts. Preserve
+        # that schema convention for old suites/logs; CAN uses the opposite sign.
+        self._brake_counts = -request
+        self._brake_release = False
+        return 0.
+    return self._end('profile complete')
+
+
+def signed_brake_maneuvers():
+  # Short application holds leave speed available for the positive-request phase.
+  positive_steps = (((14., 4.),), ((7., 4.),), ((4., 2.), (8., 2.), (14., 2.)))
+  maneuvers = []
+  for index, steps in enumerate(positive_steps, 1):
+    requests = ((-5., 2.), (-14., 4.), (0., 3.), *steps, (0., 4.))
+    label = ' -> '.join(f'{request:+g} ({seconds:g}s)' for request, seconds in requests)
+    maneuvers.append(SignedBrakeManeuver(f'brake characterization: S{index:02d}, signed 0xA: {label}', [],
+                                         repeat=1, initial_speed=RECOVERY_SPEED, request_steps=requests))
+  return maneuvers
 
 
 def brake_hold_maneuvers(levels):
@@ -592,7 +637,8 @@ BRAKE_RELEASE_MANEUVERS = brake_release_maneuvers()
 # Active zero retained pressure. Compare releasing the brake-active request at zero.
 BRAKE_CHARACTERIZATION_MANEUVERS = brake_exit_maneuvers()
 CREEP_SPEED_MANEUVERS = creep_speed_maneuvers()
-MANEUVERS = CREEP_SPEED_MANEUVERS
+SIGNED_BRAKE_MANEUVERS = signed_brake_maneuvers()
+MANEUVERS = SIGNED_BRAKE_MANEUVERS
 
 
 def main():
@@ -642,7 +688,7 @@ def main():
         alert_msg.alertDebug.alertText1 = f'Brake test ended: {maneuver._end_reason}; tap throttle or disengage'
       elif isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.brake_test_active:
         mode = '0x1' if maneuver.brake_release else '0xA'
-        alert_msg.alertDebug.alertText1 = f'Maneuver Active: brake {maneuver.brake_counts:.1f} counts, mode {mode}'
+        alert_msg.alertDebug.alertText1 = f'Maneuver Active: EBCM {-maneuver.brake_counts:+.1f} counts, mode {mode}'
       elif isinstance(maneuver, MovingCreepManeuver) and maneuver.stopping_intent:
         alert_msg.alertDebug.alertText1 = f'Creep test invalid: tap throttle or disengage ({maneuver._failure})'
       elif isinstance(maneuver, StopManeuver) and maneuver._failed:

@@ -2,8 +2,9 @@
 import math
 
 from opendbc.car import structs
-from opendbc.car.gm.values import CAR
+from opendbc.car.gm.values import CAR, GMSafetyFlags
 
+BRAKE_TEST_MIN = -14.  # legacy brake-positive convention: up to +14 signed CAN counts
 BRAKE_TEST_MAX = 20.  # EBCM counts; characterization ceiling, not the controller maximum
 BRAKE_TEST_MIN_SPEED = 0.4  # m/s
 BRAKE_TEST_MAX_SPEED = 2.0  # m/s
@@ -15,8 +16,17 @@ def brake_test_enabled(CP, CP_SP):
           CP.carFingerprint == CAR.CHEVROLET_VOLT and CP.networkLocation == structs.CarParams.NetworkLocation.gateway)
 
 
+def configure_brake_test_safety(CP, CP_SP):
+  """Set the per-drive allowance before publishing CarParams to pandad."""
+  for config in CP.safetyConfigs:
+    if config.safetyModel == structs.CarParams.SafetyModel.gm:
+      config.safetyParam &= ~GMSafetyFlags.SIGNED_BRAKE_TEST.value
+      if brake_test_enabled(CP, CP_SP):
+        config.safetyParam |= GMSafetyFlags.SIGNED_BRAKE_TEST.value
+
+
 def brake_test_valid(command, timestamp, now_nanos, CS, release=False):
-  return (math.isfinite(command) and 0. <= command <= BRAKE_TEST_MAX and
+  return (math.isfinite(command) and BRAKE_TEST_MIN <= command <= BRAKE_TEST_MAX and
           (not release or command == 0.) and
           timestamp > 0 and 0 <= now_nanos - timestamp <= BRAKE_TEST_MAX_AGE_NS and
           CS.canValid and BRAKE_TEST_MIN_SPEED < CS.vEgo < BRAKE_TEST_MAX_SPEED and

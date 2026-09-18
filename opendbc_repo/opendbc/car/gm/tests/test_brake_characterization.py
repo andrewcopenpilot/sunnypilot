@@ -2,9 +2,9 @@ import unittest
 from types import SimpleNamespace
 
 from opendbc.car import structs
-from opendbc.car.gm.brake_characterization import brake_test_enabled, forward_brake_test
+from opendbc.car.gm.brake_characterization import brake_test_enabled, forward_brake_test, configure_brake_test_safety
 from opendbc.car.gm.tests import test_longitudinal as fixtures
-from opendbc.car.gm.values import CAR
+from opendbc.car.gm.values import CAR, GMSafetyFlags
 
 
 class TestBrakeCharacterizationCAN(unittest.TestCase):
@@ -42,6 +42,19 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.assertEqual(self.update(release), (0xa, -release))
           self.assertEqual(self.controller.apply_gas, -650.)
           self.assertFalse(self.controller.brake_test_failed)
+
+  def test_signed_steps_round_trip_through_controller_dbc_and_checksum(self):
+    for signed in (-14., 0., 14., 0., 7., 4., 8., 14., 0.):
+      for _ in range(10):
+        self.assertEqual(self.update(-signed), (0xa, signed))
+        self.assertEqual(self.controller.apply_gas, -650.)
+        self.assertFalse(self.controller.brake_test_failed)
+
+  def test_positive_signed_request_cannot_use_inactive_release(self):
+    self.update(14.)
+    self.control.brakeTestRelease = True
+    self.update(-14.)
+    self.assertTrue(self.controller.brake_test_failed)
 
   def test_zero_only_release_uses_inactive_mode_and_retains_torque_request(self):
     self.assertEqual(self.update(12.), (0xa, -12.))
@@ -94,7 +107,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.control.brakeTestMonoTime = 9_000_000_000
           fresh = False
         elif case in ('nan', 'negative', 'large'):
-          command = {'nan': float('nan'), 'negative': -1., 'large': 21.}[case]
+          command = {'nan': float('nan'), 'negative': -15., 'large': 21.}[case]
         elif case in ('slow', 'fast'):
           self.state.out.vEgo = {'slow': 0.39, 'fast': 2.}[case]
         elif case == 'standstill':
@@ -164,6 +177,38 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     self.assertEqual((mode, demand), (0xa, -24.))
 
 
+class TestBrakeTestSafetyConfig(unittest.TestCase):
+  def test_scope_and_clearing_on_next_drive(self):
+    for car, network, long_control, expected in (
+      (CAR.CHEVROLET_VOLT, 'gateway', True, True),
+      (CAR.CHEVROLET_VOLT, 'fwdCamera', True, False),
+      (CAR.CHEVROLET_VOLT, 'gateway', False, False),
+      (CAR.CHEVROLET_MALIBU, 'gateway', True, False),
+    ):
+      controller = fixtures.make_controller(car, network)
+      cp, cp_sp = controller.CP, controller.CP_SP
+      cp.openpilotLongitudinalControl = long_control
+      config = cp.init('safetyConfigs', 1)[0]
+      config.safetyModel = 'gm'
+      config.safetyParam = int(GMSafetyFlags.EV)
+      cp_sp.longitudinalManeuverMode = True
+      configure_brake_test_safety(cp, cp_sp)
+      self.assertEqual(bool(config.safetyParam & GMSafetyFlags.SIGNED_BRAKE_TEST), expected)
+      self.assertTrue(config.safetyParam & GMSafetyFlags.EV)
+      cp_sp.longitudinalManeuverMode = False
+      configure_brake_test_safety(cp, cp_sp)
+      self.assertEqual(config.safetyParam, GMSafetyFlags.EV)
+
+  def test_other_safety_model_untouched(self):
+    controller = fixtures.make_controller()
+    controller.CP_SP.longitudinalManeuverMode = True
+    config = controller.CP.init('safetyConfigs', 1)[0]
+    config.safetyModel = 'toyota'
+    config.safetyParam = 255
+    configure_brake_test_safety(controller.CP, controller.CP_SP)
+    self.assertEqual(config.safetyParam, 255)
+
+
 class TestBrakeTestForwarding(unittest.TestCase):
   def test_authorization_freshness_and_serialization(self):
     controller = fixtures.make_controller()
@@ -188,6 +233,22 @@ class TestBrakeTestForwarding(unittest.TestCase):
     self.assertIsNone(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
     self.assertFalse(cc.brakeTestActive)
     self.assertFalse(cc.brakeTestRelease)
+
+  def test_signed_forwarding_round_trip_and_bounds(self):
+    controller = fixtures.make_controller()
+    controller.CP_SP.longitudinalManeuverMode = True
+    cs = fixtures.make_state().out
+    cs.canValid = True
+    cc = structs.CarControl.new_message(enabled=True, longActive=True)
+    plan = SimpleNamespace(brakeTestActive=True, brakeTestCommand=-14., brakeTestRelease=False, shouldStop=False)
+    for command, valid in ((-14., True), (-14.01, False), (20., True), (20.01, False), (float('inf'), False)):
+      plan.brakeTestCommand = command
+      self.assertEqual(forward_brake_test(cc, controller.CP, controller.CP_SP, cs, plan,
+                                          1_000_000_000, 1_100_000_000, True), valid)
+      if valid:
+        cc.clear_write_flag()
+        with structs.CarControl.from_bytes(cc.to_bytes()) as decoded:
+          self.assertEqual(decoded.brakeTestCommand, command)
 
   def test_release_forwarding_requires_zero_and_preserves_timestamp(self):
     controller = fixtures.make_controller()
