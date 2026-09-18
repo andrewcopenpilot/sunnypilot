@@ -13,12 +13,12 @@ The older suite remains available below as `STANDARD_MANEUVERS`.
 Each sweep:
 
 1. Settle at **3 mph for two seconds** using normal control.
-2. Enter ordinary active brake mode **0xA** with **zero brake demand for two seconds**.
-3. Ramp requested EBCM demand from **0 to 12 counts at 0.5 count/second**, then
+2. Enter ordinary active brake mode **0xA** with **5 counts of brake demand for two seconds**.
+3. Ramp requested EBCM demand from **5 to 20 counts at 0.25 count/second**, then
    hold the maximum for two seconds. CAN demand is rounded to whole counts;
    the request is continuous, but the actuator receives discrete levels.
 4. End at the profile limit or if speed leaves **0.4–2.0 m/s (0.9–4.5 mph)**,
-   including a standstill indication. A full uninterrupted profile lasts 28 s;
+   including a standstill indication. A full uninterrupted profile lasts 64 s;
    an early speed-bound endpoint is still useful data, not a complete sweep.
 5. The screen says **"Brake test ended"** with the endpoint reason. Normal
    stopping intent remains asserted until a throttle tap or disengagement.
@@ -27,8 +27,10 @@ Each sweep:
 During the measured portion, the gas/regen request stays at **−650 Nm**, and the
 EBCM brake mode stays **0xA**, including at zero counts and below 1.5 m/s.
 The previous 0xB sweep developed pressure and slowed to the speed guard before
-any nonzero count was sent. This repeat changes only the measured brake submode;
-its description includes 0xA to identify it in the UI and logs. Setup, recovery,
+any nonzero count was sent. The subsequent 0xA sweep first reported pressure at
+11–12 counts, so the current sweep starts at 5, extends to 20, and ramps at half
+the previous rate. Its description includes the mode, range, and rate in the UI
+and logs. Setup, recovery,
 and endpoint/invalid-command stopping retain their existing mode selection.
 PI correction, mode-transition
 thresholds, and the experimental 20% brake-demand scaling do not alter the
@@ -71,8 +73,8 @@ finder or fitted pressure model is used.
 
 Once the sweep identifies a candidate region, select integer levels around it
 with `MANEUVERS = brake_hold_maneuvers([...])` in `maneuversd.py`. Levels must be
-between 0 and 12 counts. Each level gets **three separate runs**, ramping up at
-the same slow rate and then holding exactly that command for **five seconds**
+between 0 and 20 counts. Each level gets **three separate runs**, ramping up at
+0.25 count/second from zero and then holding exactly that command for **five seconds**
 if speed remains in bounds. Each starts afresh at 3 mph so the previous level's
 pressure history does not define the next initial condition. Compare pressure,
 acceleration, speed range, and dwell time at matching commands. The hold levels

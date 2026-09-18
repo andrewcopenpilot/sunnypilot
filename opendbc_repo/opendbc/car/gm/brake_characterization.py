@@ -4,7 +4,7 @@ import math
 from opendbc.car import structs
 from opendbc.car.gm.values import CAR
 
-BRAKE_TEST_MAX = 12.  # EBCM counts; deliberately below the previous ~20-count applications
+BRAKE_TEST_MAX = 20.  # EBCM counts; characterization ceiling, not the controller maximum
 BRAKE_TEST_MIN_SPEED = 0.4  # m/s
 BRAKE_TEST_MAX_SPEED = 2.0  # m/s
 BRAKE_TEST_MAX_AGE_NS = 250_000_000

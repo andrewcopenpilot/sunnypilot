@@ -285,8 +285,9 @@ class MovingCreepManeuver(Maneuver):
 @dataclass
 class BrakeCharacterizationManeuver(Maneuver):
   """Slow EBCM demand sweep, or ramp to a chosen level and hold it."""
+  start_counts: float = 0.
   max_counts: float = BRAKE_TEST_MAX
-  counts_per_second: float = 0.5
+  counts_per_second: float = 0.25
   baseline_seconds: float = 2.
   hold_seconds: float = 2.
   _test_frames: int = 0
@@ -296,13 +297,15 @@ class BrakeCharacterizationManeuver(Maneuver):
 
   def __post_init__(self):
     assert 0. <= self.max_counts <= BRAKE_TEST_MAX and self.max_counts == int(self.max_counts)
+    assert 0. <= self.start_counts <= self.max_counts and self.start_counts == int(self.start_counts)
     assert 0. < self.counts_per_second <= 0.5
     assert self.baseline_seconds >= 0. and self.hold_seconds >= 0.
-    assert self.duration <= 40.
+    assert self.duration <= 90.
+    self._brake_counts = self.start_counts
 
   @property
   def duration(self):
-    return self.baseline_seconds + self.max_counts / self.counts_per_second + self.hold_seconds
+    return self.baseline_seconds + (self.max_counts - self.start_counts) / self.counts_per_second + self.hold_seconds
 
   @property
   def stopping_intent(self):
@@ -326,7 +329,8 @@ class BrakeCharacterizationManeuver(Maneuver):
   def _step(self):
     elapsed = self._test_frames * DT_MDL
     self._test_frames += 1
-    self._brake_counts = float(np.clip((elapsed - self.baseline_seconds) * self.counts_per_second, 0., self.max_counts))
+    self._brake_counts = float(np.clip(self.start_counts + (elapsed - self.baseline_seconds) * self.counts_per_second,
+                                      self.start_counts, self.max_counts))
     if elapsed >= self.duration:
       return self._end('profile complete')
     return 0.  # No acceleration target during direct actuator characterization.
@@ -350,7 +354,7 @@ class BrakeCharacterizationManeuver(Maneuver):
   def reset(self):
     super().reset()
     self._test_frames = 0
-    self._brake_counts = 0.
+    self._brake_counts = self.start_counts
     self._end_reason = ''
     self._awaiting_ack = False
 
@@ -406,8 +410,8 @@ MOVING_CREEP_MANEUVERS = [
 ]
 STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + MOVING_CREEP_MANEUVERS
 BRAKE_CHARACTERIZATION_MANEUVERS = [
-  BrakeCharacterizationManeuver("brake characterization: mode 0xA, 0 to 12 counts at 0.5 count/s", [],
-                               repeat=2, initial_speed=3. * CV.MPH_TO_MS),
+  BrakeCharacterizationManeuver("brake characterization: mode 0xA, 5 to 20 counts at 0.25 count/s", [],
+                               repeat=2, initial_speed=3. * CV.MPH_TO_MS, start_counts=5.),
 ]
 # First locate the response change in the sweep logs. Then use brake_hold_maneuvers([...])
 # with measured levels around it. Keep the old acceleration suite available for comparisons.

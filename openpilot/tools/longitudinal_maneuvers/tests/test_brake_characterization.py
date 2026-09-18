@@ -11,19 +11,21 @@ class TestBrakeProfiles(unittest.TestCase):
     for _ in range(round(2. / DT_MDL)):
       m.get_accel(m.initial_speed, True, False, False)
     self.assertTrue(m.brake_test_active)
-    self.assertEqual(m.brake_counts, 0.)
+    self.assertEqual(m.brake_counts, m.start_counts)
 
   def test_default_sweep_rate_bounds_and_repeat_acknowledgement(self):
     self.assertIs(MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS)
     m = replace(MANEUVERS[0])
+    self.assertEqual(m.duration, 64.)
     for repeat in range(3):
       self.start(m)
       commands = []
       for i in range(round(m.duration / DT_MDL)):
         self.assertEqual(m.get_accel(1., True, False, False), 0.)
         commands.append(m.brake_counts)
-        self.assertAlmostEqual(m.brake_counts, min(12., max(0., (i * DT_MDL - 2.) * 0.5)))
-      self.assertEqual(max(commands), 12.)
+        self.assertAlmostEqual(m.brake_counts, min(20., max(5., 5. + (i * DT_MDL - 2.) * 0.25)))
+      self.assertEqual(min(commands), 5.)
+      self.assertEqual(max(commands), 20.)
       self.assertLess(m.get_accel(1., True, False, False), 0.)
       self.assertFalse(m.brake_test_active)
       self.assertEqual(m._end_reason, 'profile complete')
@@ -75,6 +77,7 @@ class TestBrakeProfiles(unittest.TestCase):
     self.assertEqual(m._test_frames, 0)
 
   def test_invalid_profile_is_rejected(self):
-    for kwargs in ({'max_counts': 13.}, {'max_counts': -1.}, {'counts_per_second': 1.}, {'hold_seconds': 100.}):
+    for kwargs in ({'max_counts': 21.}, {'max_counts': -1.}, {'start_counts': -1.}, {'start_counts': 5.5},
+                   {'start_counts': 6., 'max_counts': 5.}, {'counts_per_second': 1.}, {'hold_seconds': 100.}):
       with self.assertRaises(AssertionError):
         BrakeCharacterizationManeuver('invalid', [], **kwargs)

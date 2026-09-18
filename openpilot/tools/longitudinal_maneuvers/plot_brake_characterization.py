@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+from opendbc.car.gm.brake_characterization import BRAKE_TEST_MAX
+
 
 def extract(events):
   rows = {name: [] for name in ('state', 'control', 'brake', 'pressure', 'output')}
@@ -119,7 +121,7 @@ def write_report(arrays, trials, output):
     plt.close(fig)
     # Only valid direct-command samples belong on the command-response plot.
     measured = ((values[:, 2] == 1) & (values[:, 3] == 1) & np.isin(mode, (10, 11)) &
-                (sent >= 0) & (sent <= 12) & (values[:, 9] == 0) & (values[:, 10] == 0))
+                (sent >= 0) & (sent <= BRAKE_TEST_MAX) & (values[:, 9] == 0) & (values[:, 10] == 0))
     for ax, column in zip(response_axes, (6, 7, 11), strict=True):
       ax.plot(sent[measured], values[measured, column], '.-', ms=2, lw=0.7, label=f'Trial {i}')
     print(f"Trial {i}: {t[-1]:.2f}s, max sent {sent.max():g} counts, gas/regen {np.nanmin(gas):g}..{np.nanmax(gas):g} Nm | {trial['outcome']}")

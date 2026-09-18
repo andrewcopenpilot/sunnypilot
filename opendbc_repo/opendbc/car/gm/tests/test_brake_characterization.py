@@ -26,7 +26,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
       with self.subTest(speed=speed):
         self.setUp()
         self.state.out.vEgo = speed
-        for command in range(13):
+        for command in range(21):
           self.assertEqual(self.update(command), (0xa, -float(command)))
           self.assertEqual(self.controller.apply_gas, -650.)
         self.assertEqual(self.update(0.), (0xa, 0.))
@@ -45,7 +45,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.control.brakeTestMonoTime = 9_000_000_000
           fresh = False
         elif case in ('nan', 'negative', 'large'):
-          command = {'nan': float('nan'), 'negative': -1., 'large': 13.}[case]
+          command = {'nan': float('nan'), 'negative': -1., 'large': 21.}[case]
         elif case in ('slow', 'fast'):
           self.state.out.vEgo = {'slow': 0.39, 'fast': 2.}[case]
         elif case == 'standstill':
@@ -83,12 +83,12 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
   def test_pedals_and_disengagement_cancel_direct_output(self):
     for condition in ('gas', 'brake', 'inactive'):
       self.setUp()
-      self.update(12.)
+      self.update(20.)
       if condition == 'inactive':
         self.control.longActive = False
       else:
         setattr(self.state.out, condition + 'Pressed', True)
-      self.assertEqual(self.update(12.), (0x1, 0.))
+      self.assertEqual(self.update(20.), (0x1, 0.))
 
   def test_requires_authorized_vehicle_and_mode(self):
     for controller, expected in ((fixtures.make_controller(), 24.),
