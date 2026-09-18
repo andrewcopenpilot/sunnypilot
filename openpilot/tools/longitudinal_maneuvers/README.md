@@ -6,10 +6,10 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 ## Current Volt default: brake characterization
 
-The default for the Volt ASCM in longitudinal maneuver mode is **12 release
-profiles, two runs each: 24 attempts total**. Direct releases run first, followed
-by application-history checks and gradual descents. The previous sweeps and
-hold profiles are preserved but are not included in this default suite.
+The default for the Volt ASCM in longitudinal maneuver mode is **six brake-exit
+profiles, two runs each: 12 attempts total**. They compare zero demand in active
+mode **0xA** with zero demand in inactive mode **0x1**, including a delayed
+transition. The earlier release, hold and sweep suites are preserved separately.
 
 Each attempt:
 
@@ -18,9 +18,7 @@ Each attempt:
 3. Ramp from 5 to the profile's peak at **0.5 count/second**, then hold the exact
    peak for the time listed below. Counts are rounded onto CAN, so the transmitted
    peak begins approximately one second before the exact requested peak.
-4. Apply the listed release command or descending steps. Hold the **final count
-   for eight seconds**, including when it is zero. Intermediate gradual steps
-   last 1.5 seconds each; the final eight-second hold replaces that step duration.
+4. Drop to **zero counts** and follow the mode sequence below.
 5. End at profile completion or if speed leaves **0.4–2.0 m/s (0.9–4.5 mph)**,
    including a standstill indication. All guards remain active during release
    and zero-count holds. A guarded endpoint is useful data, not a completed hold.
@@ -31,32 +29,28 @@ Each attempt:
 Every row below runs **twice consecutively**. Durations are per run and exclude
 setup, stopping, acknowledgement and recovery.
 
-| ID | Peak and exact-peak hold | Release sequence | Full duration | Question answered |
-|---|---|---|---:|---|
-| R01 | 12 for 4 s | Directly to 0 for 8 s | 28 s | Does active zero release pressure already applied? |
-| R02 | 12 for 4 s | Directly to 5 for 8 s | 28 s | Does a large nonzero reduction release pressure? |
-| R03 | 12 for 4 s | Directly to 8 for 8 s | 28 s | Is moderate reduction sufficient? |
-| R04 | 13 for 3 s | Directly to 0 for 8 s | 29 s | Does zero release after a stronger application? |
-| R05 | 13 for 3 s | Directly to 5 for 8 s | 29 s | Does the 5-count result survive a stronger application? |
-| R06 | 13 for 3 s | Directly to 8 for 8 s | 29 s | Does the 8-count result survive a stronger application? |
-| R07 | 12 for 4 s | Directly to 2 for 8 s | 28 s | Does near-zero differ from zero and 5? |
-| R08 | 12 for 4 s | Directly to 10 for 8 s | 28 s | Does a longer observation change the previous retention result? |
-| R09 | 12 for 2 s | Directly to 0 for 8 s | 26 s | Does shorter application history change zero-demand release? |
-| R10 | 12 for 2 s | Directly to 5 for 8 s | 26 s | Does shorter application history change nonzero release? |
-| R11 | 12 for 4 s | 10 → 8 → 6 → 4 → 2 → 0; 1.5 s steps, final 0 for 8 s | 35.5 s | Can a gradual descent locate the release region? |
-| R12 | 12 for 4 s | 11 → 10 → … → 1 → 0; 1.5 s steps, final 0 for 8 s | 44.5 s | Do smaller, slower steps behave differently? |
+| ID | Peak and exact-peak hold | Zero-demand sequence | Full duration |
+|---|---|---|---:|
+| E01 | 12 for 4 s | 0xA for 8 s | 28 s |
+| E02 | 12 for 4 s | 0x1 for 8 s | 28 s |
+| E03 | 12 for 4 s | 0xA for 2 s, then 0x1 for 8 s | 30 s |
+| E04 | 13 for 3 s | 0xA for 8 s | 29 s |
+| E05 | 13 for 3 s | 0x1 for 8 s | 29 s |
+| E06 | 13 for 3 s | 0xA for 2 s, then 0x1 for 8 s | 31 s |
 
-The suite has approximately **12 minutes of measured profiles** if every attempt
-completes, plus setup, acknowledgement and recovery. The gradual profiles run
-last because retaining pressure at intermediate levels may reach the lower speed
-guard before zero. The direct profiles provide independent chances to observe
-zero and low-count release without traversing those intermediate holds.
+The suite has **5 minutes 50 seconds of measured profiles** if every attempt
+completes, plus setup, acknowledgement and recovery. E01 and E04 repeat the
+previous suite's active-zero commands for comparison. E02 and E05 test immediate
+brake deactivation; E03 and E06 separate the numeric-demand drop from deactivation
+within the same run.
 
-During measurement, gas/regen stays at **−650 Nm** and brake mode stays **0xA**,
-including the full zero-count hold. Zero does **not** mean inactive brake mode,
-a torque handoff, or the end of the test. Setup, recovery, and endpoint or
-invalid-command stopping retain their existing behavior. PI and the experimental
-brake-demand scaling do not alter these direct commands.
+During measurement, longitudinal control remains active and gas/regen stays at
+**−650 Nm**, including the inactive-brake hold. A test-only release flag ends the
+brake-active request through the existing CAN helper. It is valid **only at zero
+demand**; it cannot force an arbitrary mode or request 0x1 with nonzero counts.
+The experiment stays active throughout this hold. Setup, recovery, and endpoint
+or invalid-command stopping retain their existing behavior. PI and the
+experimental brake-demand scaling do not alter these direct commands.
 
 Application is timed, not triggered by a pressure threshold. Check the logs to
 verify that each run actually developed pressure before release. A run with no
@@ -64,12 +58,12 @@ pressure to begin with is not evidence of successful release. The 13-count
 profiles provide additional application cases; they do not isolate peak magnitude
 from hold duration because their exact-peak hold is shorter to preserve speed.
 
-For each release, compare pressure before the drop, onset and extent of pressure
-reduction, speed, acceleration, delivered axle torque and AxleTorqueMin. Pressure
-is in raw units, and changing speed/torque can affect it. A reproducible active
-zero release enables work on brake-demand reduction and torque handoff. If zero
-retains pressure too, the next separate experiment is active-brake disengagement;
-this suite does not mix mode switching into the numeric-demand comparison.
+For each release, compare pressure before the drop, delay and extent of pressure
+reduction after the mode transition, speed, acceleration, delivered axle torque
+and AxleTorqueMin. Pressure is in raw units, and changing speed/torque can affect
+it. The question is whether ending the active request clears pressure more
+reliably than active zero, and whether two seconds of active zero changes that
+response. This informs the brake-exit transition before changing normal control.
 
 This is **EBCM demand characterization, not direct hydraulic-pressure control**:
 the EBCM still blends braking internally, and constant commanded gas/regen does
@@ -97,20 +91,21 @@ The report writes PNG/PDF time traces for requested/sent brake counts, filtered
 and raw speed, acceleration, and raw pressure. `command_response.png` compares
 speed, acceleration, and pressure against **actual CAN brake counts** across
 repeats. Per-trial CSVs also include brake mode, gas/regen request, engagement,
-and pedal state. Endpoint reasons are preserved in `trials.json`.
+pedal state, and the zero-demand release flag. Endpoint reasons are preserved in `trials.json`.
 
 Use the traces to locate where pressure and deceleration begin changing, then
 check whether that location repeats. Speed integrates acceleration, so a bend
 in speed alone is not a steady-state brake calibration. No automatic inflection
 finder or fitted pressure model is used.
 
-The default profiles are built by `brake_release_maneuvers()` in `maneuversd.py`.
-Their descriptions include R01–R12, the mode, peak hold, and release sequence.
-The active alert shows the current requested count. Compare each repeat
+The default profiles are built by `brake_exit_maneuvers()` in `maneuversd.py`.
+Their descriptions include E01–E06, the mode, peak hold, and release sequence.
+The active alert shows the current requested count and mode. Compare each repeat
 separately and exclude fallback stopping commands after a guard triggers.
 
 To select a previous suite instead, set `MANEUVERS` to:
 
+- `BRAKE_RELEASE_MANEUVERS`: the previous 12 active-mode release profiles, two runs each.
 - `BRAKE_HOLD_MANEUVERS`: nine earlier 11/12/13-count hold-and-release attempts.
 - `BRAKE_SWEEP_MANEUVERS`: three earlier 5–20-count sweeps at 0.25 count/second.
 - `STANDARD_MANEUVERS`: the preserved acceleration suite described below.
@@ -120,7 +115,7 @@ Only the selected suite runs.
 ## Preserved acceleration comparison suite
 
 The following section describes `STANDARD_MANEUVERS`, not the current Volt
-sweep default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
+brake-exit default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
 
 The suite contains **22 runs: eleven creep scenarios, each repeated twice**. The
 original eight scenarios remain first, with identical active commands, durations,
@@ -255,7 +250,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt release suite, allow 24 attempts (12 profiles, two runs each) and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt brake-exit suite, allow 12 attempts (six profiles, two runs each) and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
    **Note:** Every run settles at 3 mph before the test and recovers to 3 mph afterward. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 
@@ -269,7 +264,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![image](https://github.com/user-attachments/assets/cfe4c6d9-752f-4b24-b421-4b90a01933dc)
 
-8. For the current brake sweep, use `plot_brake_characterization.py` above. For the preserved acceleration suite, gather the route ID and run the original report generator. The file will be exported to the same directory:
+8. For the current brake-exit suite, use `plot_brake_characterization.py` above. For the preserved acceleration suite, gather the route ID and run the original report generator. The file will be exported to the same directory:
 
     ```sh
     $ python openpilot/tools/longitudinal_maneuvers/generate_report.py 57048cfce01d9625/0000010e--5b26bc3be7 'Volt creep baseline'

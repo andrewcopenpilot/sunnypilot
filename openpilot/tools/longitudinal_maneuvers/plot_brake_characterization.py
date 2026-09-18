@@ -12,7 +12,7 @@ from opendbc.car.gm.brake_characterization import BRAKE_TEST_MAX
 
 
 def extract(events):
-  rows = {name: [] for name in ('state', 'control', 'brake', 'pressure', 'output')}
+  rows = {name: [] for name in ('state', 'control', 'brake', 'pressure', 'output', 'release')}
   trials = []
   active = False
   last_time = 0.
@@ -34,6 +34,7 @@ def extract(events):
     elif kind == 'carControl':
       c = m.carControl
       rows['control'].append((t, c.brakeTestCommand, c.brakeTestActive, c.longActive))
+      rows['release'].append((t, c.brakeTestRelease))
     elif kind == 'carOutput':
       rows['output'].append((t, m.carOutput.actuatorsOutput.gas))
     elif kind in ('can', 'sendcan'):
@@ -70,11 +71,12 @@ def trial_samples(arrays, trial):
   brake = brake[(brake[:, 0] >= trial['start']) & (brake[:, 0] < trial['end'])]
   t = brake[:, 0]
   return np.column_stack((t - trial['start'], sample(arrays['control'], t, 3), brake[:, 1:],
-                          sample(arrays['state'], t, 5), sample(arrays['pressure'], t, 1), sample(arrays['output'], t, 1)))
+                          sample(arrays['state'], t, 5), sample(arrays['pressure'], t, 1), sample(arrays['output'], t, 1),
+                          sample(arrays['release'], t, 1)))
 
 
 COLUMNS = ['seconds', 'requested_counts', 'test_requested', 'long_active', 'sent_counts', 'brake_mode',
-           'speed_m_s', 'accel_m_s2', 'raw_speed_m_s', 'gas_pressed', 'brake_pressed', 'pressure_raw', 'gas_regen_nm']
+           'speed_m_s', 'accel_m_s2', 'raw_speed_m_s', 'gas_pressed', 'brake_pressed', 'pressure_raw', 'gas_regen_nm', 'brake_release_requested']
 
 
 def write_report(arrays, trials, output):
@@ -97,7 +99,7 @@ def write_report(arrays, trials, output):
       writer.writerow(COLUMNS)
       writer.writerows(values)
     # Plot all samples inside the measured interval, including any terminal stop command.
-    t, requested, _, _, sent, mode, speed, accel, raw, _, _, pressure, gas = values.T
+    t, requested, _, _, sent, mode, speed, accel, raw, _, _, pressure, gas, release = values.T
     fig, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
     axes[0].plot(t, requested, label='Requested count ramp')
     axes[0].step(t, sent, where='post', label='Actual CAN counts')
@@ -120,7 +122,8 @@ def write_report(arrays, trials, output):
     fig.savefig(output / f'trial_{i}.pdf')
     plt.close(fig)
     # Only valid direct-command samples belong on the command-response plot.
-    measured = ((values[:, 2] == 1) & (values[:, 3] == 1) & np.isin(mode, (10, 11)) &
+    valid_mode = np.isin(mode, (10, 11)) | ((mode == 1) & (sent == 0) & (release == 1))
+    measured = ((values[:, 2] == 1) & (values[:, 3] == 1) & valid_mode &
                 (sent >= 0) & (sent <= BRAKE_TEST_MAX) & (values[:, 9] == 0) & (values[:, 10] == 0))
     for ax, column in zip(response_axes, (6, 7, 11), strict=True):
       ax.plot(sent[measured], values[measured, column], '.-', ms=2, lw=0.7, label=f'Trial {i}')

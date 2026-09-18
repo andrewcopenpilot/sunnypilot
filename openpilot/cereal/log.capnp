@@ -1239,6 +1239,7 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   allowBrake @39: Bool;
   brakeTestActive @40 :Bool; # explicit actuator-characterization request
   brakeTestCommand @41 :Float32; # EBCM command counts, not pressure
+  brakeTestRelease @42 :Bool; # end active brake request during a zero-demand test hold
 
 
   solverExecutionTime @35 :Float32;

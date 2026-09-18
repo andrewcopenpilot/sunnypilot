@@ -166,12 +166,14 @@ class CarController(CarControllerBase):
           self.brake_accel_cmd = 0.
           self.stock_creep_active = False
         elif test_requested:
-          if not self.brake_test_failed and not stopping and brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out):
+          if (not self.brake_test_failed and not stopping and
+              brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out, CC.brakeTestRelease)):
             # Characterize the EBCM with fixed gas/regen and direct counts. Bypass PI
             # mapping, creep scaling and mode selection only for this explicit test.
             brake_test_running = True
-            self.brake_mode = True
-            self.stock_creep_active = True  # retain active brake mode even at zero counts
+            self.brake_mode = not CC.brakeTestRelease
+            # Zero-demand release uses the normal inactive path in the CAN helper.
+            self.stock_creep_active = self.brake_mode
             self.gas_cmd = self.apply_gas = self.params.MAX_ACC_REGEN
             self.apply_brake = int(round(CC.brakeTestCommand))
             self.brake_accel_cmd = -self.apply_brake / self.params.BRAKE_COUNTS_PER_MPS2

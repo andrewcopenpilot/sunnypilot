@@ -293,8 +293,10 @@ class BrakeCharacterizationManeuver(Maneuver):
   release_counts: tuple[float, ...] = ()
   release_hold_seconds: float = 5.
   release_final_hold_seconds: float | None = None
+  inactive_brake_after: float | None = None  # seconds after the start of the zero-demand hold
   _test_frames: int = 0
   _brake_counts: float = 0.
+  _brake_release: bool = False
   _end_reason: str = ''
   _awaiting_ack: bool = False
 
@@ -307,6 +309,10 @@ class BrakeCharacterizationManeuver(Maneuver):
     assert self.release_final_hold_seconds is None or (self.release_counts and self.release_final_hold_seconds > 0.)
     assert all(0. <= level < previous and level == int(level)
                for previous, level in zip((self.max_counts, *self.release_counts[:-1]), self.release_counts, strict=False))
+    if self.inactive_brake_after is not None:
+      assert self.release_counts == (0.,)
+      zero_hold = self.release_final_hold_seconds if self.release_final_hold_seconds is not None else self.release_hold_seconds
+      assert 0. <= self.inactive_brake_after < zero_hold
     assert self.duration <= 90.
     self._brake_counts = self.start_counts
 
@@ -329,6 +335,10 @@ class BrakeCharacterizationManeuver(Maneuver):
   def brake_counts(self):
     return self._brake_counts if self.brake_test_active else 0.
 
+  @property
+  def brake_release(self):
+    return self.brake_test_active and self._brake_release
+
   def _end(self, reason):
     self._active = False
     self._awaiting_ack = True
@@ -348,6 +358,8 @@ class BrakeCharacterizationManeuver(Maneuver):
     else:
       self._brake_counts = float(np.clip(self.start_counts + (elapsed - self.baseline_seconds) * self.counts_per_second,
                                         self.start_counts, self.max_counts))
+    self._brake_release = (self.inactive_brake_after is not None and
+                           elapsed >= release_start + self.inactive_brake_after)
     return 0.  # No acceleration target during direct actuator characterization.
 
   def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
@@ -370,6 +382,7 @@ class BrakeCharacterizationManeuver(Maneuver):
     super().reset()
     self._test_frames = 0
     self._brake_counts = self.start_counts
+    self._brake_release = False
     self._end_reason = ''
     self._awaiting_ack = False
 
@@ -416,6 +429,23 @@ def brake_release_maneuvers():
                                                  start_counts=5., max_counts=peak, counts_per_second=0.5,
                                                  hold_seconds=hold, release_counts=releases, release_hold_seconds=step_seconds,
                                                  release_final_hold_seconds=8.))
+  return maneuvers
+
+
+def brake_exit_maneuvers():
+  # Mode is selected by the existing CAN helper; inactive release is legal only at zero demand.
+  maneuvers = []
+  for peak, hold in ((12., 4.), (13., 3.)):
+    for inactive_after, release_label in (
+      (None, "0 in 0xA for 8s"),
+      (0., "0 in 0x1 for 8s"),
+      (2., "0 in 0xA 2s, then 0x1 8s"),
+    ):
+      description = f"brake characterization: E{len(maneuvers) + 1:02d}, {peak:g} counts {hold:g}s; {release_label}"
+      maneuvers.append(BrakeCharacterizationManeuver(description, [], repeat=1, initial_speed=3. * CV.MPH_TO_MS,
+                                                   start_counts=5., max_counts=peak, counts_per_second=0.5, hold_seconds=hold,
+                                                   release_counts=(0.,), release_hold_seconds=8. + (inactive_after or 0.),
+                                                   inactive_brake_after=inactive_after))
   return maneuvers
 
 
@@ -467,8 +497,9 @@ BRAKE_SWEEP_MANEUVERS = [
                                repeat=2, initial_speed=3. * CV.MPH_TO_MS, start_counts=5.),
 ]
 BRAKE_HOLD_MANEUVERS = brake_hold_maneuvers([11., 12., 13.])
-# Small descending commands retained pressure. Test deeper releases in active mode 0xA.
-BRAKE_CHARACTERIZATION_MANEUVERS = brake_release_maneuvers()
+BRAKE_RELEASE_MANEUVERS = brake_release_maneuvers()
+# Active zero retained pressure. Compare releasing the brake-active request at zero.
+BRAKE_CHARACTERIZATION_MANEUVERS = brake_exit_maneuvers()
 MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS
 
 
@@ -519,7 +550,8 @@ def main():
       if isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.stopping_intent:
         alert_msg.alertDebug.alertText1 = f'Brake test ended: {maneuver._end_reason}; tap throttle or disengage'
       elif isinstance(maneuver, BrakeCharacterizationManeuver) and maneuver.brake_test_active:
-        alert_msg.alertDebug.alertText1 = f'Maneuver Active: brake {maneuver.brake_counts:.1f} counts'
+        mode = '0x1' if maneuver.brake_release else '0xA'
+        alert_msg.alertDebug.alertText1 = f'Maneuver Active: brake {maneuver.brake_counts:.1f} counts, mode {mode}'
       elif isinstance(maneuver, MovingCreepManeuver) and maneuver.stopping_intent:
         alert_msg.alertDebug.alertText1 = f'Creep test invalid: tap throttle or disengage ({maneuver._failure})'
       elif isinstance(maneuver, StopManeuver) and maneuver._failed:
@@ -565,6 +597,7 @@ def main():
     if isinstance(maneuver, BrakeCharacterizationManeuver):
       longitudinalPlan.brakeTestActive = maneuver.brake_test_active
       longitudinalPlan.brakeTestCommand = maneuver.brake_counts
+      longitudinalPlan.brakeTestRelease = maneuver.brake_release
     stopping_intent = isinstance(maneuver, (StopManeuver, MovingCreepManeuver, BrakeCharacterizationManeuver)) and maneuver.stopping_intent
     pulse_active = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
     # a creep pulse mimics the model: stop flag off at standstill with a slightly positive target

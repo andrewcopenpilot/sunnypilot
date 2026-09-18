@@ -17,7 +17,7 @@ def event(kind, timestamp):
   return msg
 
 
-def synthetic_events():
+def synthetic_events(inactive_release=False):
   """Small artificial log fixture; deliberately not a vehicle-response model."""
   controller = make_controller()
   packer = CANPacker('gm_global_a_chassis')
@@ -29,7 +29,8 @@ def synthetic_events():
     yield m
     if tick == 120:
       break
-    count = max(0., (tick * .05 - 2.) * .5)
+    release = inactive_release and tick >= 80
+    count = 0. if release else max(0., (tick * .05 - 2.) * .5)
     m = event('carState', t)
     m.carState.vEgo = 1.34 - .015 * (tick * .05) ** 2
     m.carState.vEgoRaw = m.carState.vEgo
@@ -38,12 +39,13 @@ def synthetic_events():
     m = event('carControl', t)
     m.carControl.brakeTestActive = True
     m.carControl.brakeTestCommand = count
+    m.carControl.brakeTestRelease = release
     m.carControl.longActive = True
     yield m
     m = event('carOutput', t)
     m.carOutput.actuatorsOutput.gas = -650.
     yield m
-    packet = gmcan.create_friction_brake_command(packer, 1, round(count), tick % 4, True, True, False, controller.CP, brake_active=True)
+    packet = gmcan.create_friction_brake_command(packer, 1, round(count), tick % 4, True, not release, False, controller.CP, brake_active=not release)
     m = log.Event.new_message()
     m.logMonoTime = int(t * 1e9)
     can = m.init('sendcan', 1)[0]
@@ -70,6 +72,30 @@ class TestBrakeReport(unittest.TestCase):
     self.assertTrue(np.all(values[:, 12] == -650.))
     self.assertEqual(values[0, 0], 0.)
     self.assertLess(values[-1, 0], 6.)
+
+  def test_inactive_zero_remains_in_measured_interval(self):
+    arrays, trials = extract(synthetic_events(inactive_release=True))
+    values = trial_samples(arrays, trials[0])
+    self.assertEqual(values.shape, (120, len(COLUMNS)))
+    release = values[:, COLUMNS.index('brake_release_requested')]
+    self.assertTrue(np.all(release[:80] == 0))
+    self.assertTrue(np.all(release[80:] == 1))
+    self.assertTrue(np.all(values[:80, 5] == 11))
+    self.assertTrue(np.all(values[80:, 5] == 1))
+    self.assertTrue(np.all(values[80:, 1] == 0))
+    self.assertTrue(np.all(values[80:, 4] == 0))
+    self.assertTrue(np.all(values[:, 2:4] == 1))
+    self.assertTrue(np.all(values[:, 12] == -650.))
+
+  def test_release_plan_survives_serialization(self):
+    msg = event('longitudinalPlan', 1.)
+    self.assertFalse(msg.longitudinalPlan.brakeTestRelease)
+    msg.longitudinalPlan.brakeTestActive = True
+    msg.longitudinalPlan.brakeTestRelease = True
+    with log.Event.from_bytes(msg.to_bytes()) as decoded:
+      self.assertTrue(decoded.longitudinalPlan.brakeTestActive)
+      self.assertTrue(decoded.longitudinalPlan.brakeTestRelease)
+      self.assertEqual(decoded.longitudinalPlan.brakeTestCommand, 0.)
 
   def test_drive_authorization_survives_serialization(self):
     cp = structs.CarParamsSP()

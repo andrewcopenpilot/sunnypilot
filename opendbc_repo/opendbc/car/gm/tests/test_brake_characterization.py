@@ -43,6 +43,43 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.assertEqual(self.controller.apply_gas, -650.)
           self.assertFalse(self.controller.brake_test_failed)
 
+  def test_zero_only_release_uses_inactive_mode_and_retains_torque_request(self):
+    self.assertEqual(self.update(12.), (0xa, -12.))
+    for _ in range(50):
+      self.assertEqual(self.update(0.), (0xa, 0.))
+    self.control.brakeTestRelease = True
+    for _ in range(200):
+      self.assertEqual(self.update(0.), (0x1, 0.))
+      self.assertEqual(self.controller.apply_gas, -650.)
+      self.assertFalse(self.controller.brake_mode)
+    self.control.brakeTestRelease = False
+    self.assertEqual(self.update(0.), (0xa, 0.))
+
+  def test_inactive_brake_hold_retains_all_validation_and_fault_latching(self):
+    for case in ('nonzero', 'fractional', 'stale', 'slow', 'invalid_can', 'standstill'):
+      with self.subTest(case=case):
+        self.setUp()
+        self.update(12.)
+        self.control.brakeTestRelease = True
+        self.assertEqual(self.update(0.), (0x1, 0.))
+        command = 10. if case == 'nonzero' else 0.1 if case == 'fractional' else 0.
+        if case == 'stale':
+          self.control.brakeTestMonoTime = 1
+        if case == 'slow':
+          self.state.out.vEgo = 0.39
+        if case == 'invalid_can':
+          self.state.out.canValid = False
+        if case == 'standstill':
+          self.state.out.standstill = True
+        self.update(command, fresh=case != 'stale')
+        self.assertTrue(self.controller.brake_test_failed)
+        self.state.out.vEgo = 1.
+        self.state.out.canValid = True
+        self.state.out.standstill = False
+        for _ in range(10):
+          mode, demand = self.update(0.)
+        self.assertEqual((mode, demand), (0xb, -150.))
+
   def test_stale_invalid_and_out_of_bounds_commands_stop(self):
     for case in ('stale', 'future', 'nan', 'negative', 'large', 'slow', 'fast', 'standstill', 'cruise_stop', 'invalid_can', 'stopping'):
       with self.subTest(case=case):
@@ -133,7 +170,7 @@ class TestBrakeTestForwarding(unittest.TestCase):
     cs = fixtures.make_state().out
     cs.canValid = True
     cc = structs.CarControl.new_message(enabled=True, longActive=True)
-    plan = SimpleNamespace(brakeTestActive=True, brakeTestCommand=3.5, shouldStop=False)
+    plan = SimpleNamespace(brakeTestActive=True, brakeTestCommand=3.5, brakeTestRelease=False, shouldStop=False)
     args = (cc, controller.CP, controller.CP_SP, cs, plan)
     self.assertIsNone(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
     controller.CP_SP.longitudinalManeuverMode = True
@@ -150,3 +187,26 @@ class TestBrakeTestForwarding(unittest.TestCase):
     cc.longActive = False
     self.assertIsNone(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
     self.assertFalse(cc.brakeTestActive)
+    self.assertFalse(cc.brakeTestRelease)
+
+  def test_release_forwarding_requires_zero_and_preserves_timestamp(self):
+    controller = fixtures.make_controller()
+    controller.CP_SP.longitudinalManeuverMode = True
+    cs = fixtures.make_state().out
+    cs.canValid = True
+    cc = structs.CarControl.new_message(enabled=True, longActive=True)
+    plan = SimpleNamespace(brakeTestActive=True, brakeTestCommand=0., brakeTestRelease=True, shouldStop=False)
+    args = (cc, controller.CP, controller.CP_SP, cs, plan)
+    self.assertTrue(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
+    with structs.CarControl.from_bytes(cc.to_bytes()) as decoded:
+      self.assertTrue(decoded.brakeTestActive)
+      self.assertTrue(decoded.brakeTestRelease)
+      self.assertEqual(decoded.brakeTestCommand, 0.)
+      self.assertEqual(decoded.brakeTestMonoTime, 1_000_000_000)
+    plan.brakeTestCommand = 0.1  # Must be exactly zero, even if CAN would round to zero.
+    self.assertFalse(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
+    plan.brakeTestCommand = 0.
+    self.assertFalse(forward_brake_test(*args, 1_000_000_000, 1_300_000_000, True))
+    plan.brakeTestActive = False
+    self.assertIsNone(forward_brake_test(*args, 1_000_000_000, 1_100_000_000, True))
+    self.assertFalse(cc.brakeTestRelease)
