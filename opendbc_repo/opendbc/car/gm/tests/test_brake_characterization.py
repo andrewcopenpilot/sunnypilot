@@ -161,7 +161,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     self.control.brakeTestActive = False
     for _ in range(10):
       mode, demand = self.update(3.)
-    self.assertEqual((mode, demand), (0xb, -24.))
+    self.assertEqual((mode, demand), (0xa, -24.))
 
 
 class TestBrakeTestForwarding(unittest.TestCase):

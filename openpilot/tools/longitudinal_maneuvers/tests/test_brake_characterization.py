@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  BrakeCharacterizationManeuver, MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS, BRAKE_SWEEP_MANEUVERS,
+  BrakeCharacterizationManeuver, BRAKE_CHARACTERIZATION_MANEUVERS, BRAKE_SWEEP_MANEUVERS,
   BRAKE_HOLD_MANEUVERS, BRAKE_RELEASE_MANEUVERS, RECOVERY_SPEED, DT_MDL,
 )
 
@@ -106,13 +106,12 @@ class TestBrakeProfiles(unittest.TestCase):
         self.assertTrue(m._run_completed)
         self.assertEqual(m.finished, repeat == 1)
 
-  def test_default_exit_suite_phase_timing_and_repeats(self):
-    self.assertIs(MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS)
-    self.assertEqual(len(MANEUVERS), 6)
-    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 12)
+  def test_preserved_exit_suite_phase_timing_and_repeats(self):
+    self.assertEqual(len(BRAKE_CHARACTERIZATION_MANEUVERS), 6)
+    self.assertEqual(sum(m.repeat + 1 for m in BRAKE_CHARACTERIZATION_MANEUVERS), 12)
     expected = [(12., 4., None), (12., 4., 0.), (12., 4., 2.),
                 (13., 3., None), (13., 3., 0.), (13., 3., 2.)]
-    for profile, (peak, hold, inactive_after) in zip(MANEUVERS, expected, strict=True):
+    for profile, (peak, hold, inactive_after) in zip(BRAKE_CHARACTERIZATION_MANEUVERS, expected, strict=True):
       m = replace(profile)
       self.assertEqual((m.max_counts, m.hold_seconds, m.inactive_brake_after), (peak, hold, inactive_after))
       release_start = 2. + (peak - 5.) / 0.5 + hold
@@ -140,7 +139,7 @@ class TestBrakeProfiles(unittest.TestCase):
         self.assertEqual(m.finished, repeat == 1)
 
   def test_final_zero_hold_keeps_guard_and_resets_on_interruption(self):
-    for profile in MANEUVERS:
+    for profile in BRAKE_CHARACTERIZATION_MANEUVERS:
       for interrupted in (False, True):
         m = replace(profile)
         self.start(m)
@@ -182,7 +181,7 @@ class TestBrakeProfiles(unittest.TestCase):
                                          (2., False, False, 'upper speed bound'),
                                          (1., True, False, 'lower speed bound'),
                                          (1., False, True, 'lower speed bound')):
-      m = replace(MANEUVERS[0])
+      m = replace(BRAKE_CHARACTERIZATION_MANEUVERS[0])
       self.start(m)
       self.assertLess(m.get_accel(speed, True, standstill, css), 0.)
       self.assertFalse(m.brake_test_active)
@@ -191,7 +190,7 @@ class TestBrakeProfiles(unittest.TestCase):
       self.assertTrue(m.stopping_intent)
 
   def test_interruption_resets_entire_sweep(self):
-    m = replace(MANEUVERS[0])
+    m = replace(BRAKE_CHARACTERIZATION_MANEUVERS[0])
     self.start(m)
     for _ in range(120):
       m.get_accel(1., True, False, False)

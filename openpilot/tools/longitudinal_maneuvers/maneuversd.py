@@ -7,6 +7,7 @@ from opendbc.car.gm.brake_characterization import (
 )
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
+from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
 
 RECOVERY_SPEED = 3. * CV.MPH_TO_MS
 
@@ -217,6 +218,8 @@ class MovingCreepManeuver(Maneuver):
   """Start timed commands on a speed crossing, without requiring stable creep."""
   creep_speed: float = 1.0  # m/s, start on the downward crossing with room before standstill
   acquisition_timeout: float = 20.
+  min_speed: float = 0.4
+  max_speed: float = 1.5
   _creep_setup: bool = False
   _acquisition_frames: int = 0
   _failure: str = ''
@@ -252,9 +255,9 @@ class MovingCreepManeuver(Maneuver):
       self._ready_cnt = 0
     if long_active and self._creep_setup and not self._recovering and not self.finished:
       if not self._failure:
-        if standstill or cruise_standstill or v_ego < 0.4:
+        if standstill or cruise_standstill or v_ego < self.min_speed:
           self._failure = 'lost moving crawl'
-        elif v_ego > 1.5:
+        elif v_ego > self.max_speed:
           self._failure = 'above creep speed range'
         elif not self._active:
           self._acquisition_frames += 1
@@ -280,6 +283,94 @@ class MovingCreepManeuver(Maneuver):
     self._acquisition_frames = 0
     self._failure = ''
     self._run_failed = False
+
+
+@dataclass
+class CreepSpeedManeuver(MovingCreepManeuver):
+  """Timed speed ramps through normal longitudinal control; no creep settling gate."""
+  speed_points: tuple[float, ...] = ()  # m/s
+  time_points: tuple[float, ...] = ()   # seconds from measurement start
+  min_speed: float = 0.1               # guard below the lowest 0.5 mph target
+  max_speed: float = 1.8
+  _measured_speed: float = 0.
+  _target_speed: float = RECOVERY_SPEED
+
+  def __post_init__(self):
+    assert len(self.speed_points) == len(self.time_points) >= 2
+    assert self.time_points[0] == 0.
+    assert all(np.isfinite(t) for t in self.time_points)
+    assert all(b > a for a, b in zip(self.time_points[:-1], self.time_points[1:], strict=True))
+    assert all(self.min_speed < v < self.max_speed for v in self.speed_points)
+    assert self.speed_points[0] == self.initial_speed and self.speed_points[-1] == RECOVERY_SPEED
+
+  @property
+  def target_speed(self):
+    return self._target_speed if self.active else RECOVERY_SPEED
+
+  def reference(self, elapsed):
+    i = int(np.clip(np.searchsorted(self.time_points, elapsed, side='right') - 1, 0, len(self.time_points) - 2))
+    speed = float(np.interp(elapsed, self.time_points, self.speed_points))
+    accel = ((self.speed_points[i + 1] - self.speed_points[i]) / (self.time_points[i + 1] - self.time_points[i])
+             if elapsed < self.time_points[-1] else 0.)
+    return speed, accel
+
+  def _setup(self, v_ego, cruise_standstill):
+    # Begin the timed descent immediately after the standard 3 mph setup.
+    accel = Maneuver._setup(self, v_ego, cruise_standstill)
+    if self.active:
+      self._creep_setup = True
+    return accel
+
+  def _step(self):
+    elapsed = self._action_frames * DT_MDL
+    self._target_speed, feedforward = self.reference(elapsed)
+    # Test trajectory tracking only: leave the production acceleration PI unchanged.
+    accel = float(np.clip(feedforward + 0.5 * (self._target_speed - self._measured_speed), -0.3, 0.3))
+    self._action_frames += 1
+    if elapsed >= self.time_points[-1]:
+      self._active = False
+      self._recovering = True
+      self._ready_cnt = 0
+    return accel
+
+  def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
+    self._measured_speed = v_ego
+    # Some gas overrides leave longActive asserted; interrupt instead of advancing the profile.
+    return super().get_accel(v_ego, long_active and not gas_pressed, standstill, cruise_standstill, gas_pressed)
+
+  def reset(self):
+    super().reset()
+    self._measured_speed = 0.
+    self._target_speed = self.initial_speed
+
+
+def creep_speed_maneuvers():
+  maneuvers = []
+  for cycling in (False, True):
+    for low in (1.5, 1., 0.5):
+      legs = [(low, 6.), (3., 3.)] if not cycling else [(low, 5.), (2., 4.), (low, 5.), (2., 4.), (low, 5.), (3., 3.)]
+      speeds, times = [RECOVERY_SPEED], [0.]
+      for mph, hold in legs:
+        speed = mph * CV.MPH_TO_MS
+        # Constant 0.10 m/s² reference ramps; tracking correction is separately bounded.
+        arrival = times[-1] + abs(speed - speeds[-1]) / 0.1
+        times.extend((arrival, arrival + hold))
+        speeds.extend((speed, speed))
+      sequence = ' → '.join(['3', *(f'{mph:g}' for mph, _ in legs)])
+      description = f"creep speed: C{len(maneuvers) + 1:02d}, {sequence} mph"
+      maneuvers.append(CreepSpeedManeuver(description, [], repeat=1, initial_speed=RECOVERY_SPEED,
+                                         speed_points=tuple(speeds), time_points=tuple(times)))
+  return maneuvers
+
+
+def maneuver_should_stop(maneuver, v_ego, accel):
+  explicit_stop = isinstance(maneuver, (StopManeuver, MovingCreepManeuver, BrakeCharacterizationManeuver)) and maneuver.stopping_intent
+  pulse = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
+  moving_test = (isinstance(maneuver, MovingCreepManeuver) and maneuver._creep_setup and
+                 not maneuver._recovering and not maneuver.finished)
+  # Bypass the speed/acceleration heuristic only while a moving test owns stop intent.
+  # Its speed and standstill guards can still request a stop at any target acceleration.
+  return explicit_stop or (should_stop(v_ego, accel) and not pulse and not moving_test)
 
 
 @dataclass
@@ -500,7 +591,8 @@ BRAKE_HOLD_MANEUVERS = brake_hold_maneuvers([11., 12., 13.])
 BRAKE_RELEASE_MANEUVERS = brake_release_maneuvers()
 # Active zero retained pressure. Compare releasing the brake-active request at zero.
 BRAKE_CHARACTERIZATION_MANEUVERS = brake_exit_maneuvers()
-MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS
+CREEP_SPEED_MANEUVERS = creep_speed_maneuvers()
+MANEUVERS = CREEP_SPEED_MANEUVERS
 
 
 def main():
@@ -508,7 +600,6 @@ def main():
   from opendbc.car import structs
   from openpilot.common.params import Params
   from openpilot.common.swaglog import cloudlog
-  from openpilot.selfdrive.controls.lib.drive_helpers import should_stop
 
   params = Params()
   cloudlog.info("maneuversd is waiting for CarParams")
@@ -569,6 +660,8 @@ def main():
         alert_msg.alertDebug.alertText1 = f'Restarting: setup at {maneuver.setup_speed * CV.MS_TO_MPH:.0f} mph'
       elif isinstance(maneuver, MovingCreepManeuver) and maneuver._creep_setup and not maneuver.active:
         alert_msg.alertDebug.alertText1 = f'Setting up: slowing through {maneuver.creep_speed * CV.MS_TO_MPH:.1f} mph'
+      elif isinstance(maneuver, CreepSpeedManeuver) and maneuver.active:
+        alert_msg.alertDebug.alertText1 = f'Maneuver Active: target {maneuver.target_speed * CV.MS_TO_MPH:.2f} mph; actual {v_ego * CV.MS_TO_MPH:.2f} mph'
       elif maneuver.active:
         alert_msg.alertDebug.alertText1 = f'Maneuver Active: {accel:0.2f} m/s^2'
       else:
@@ -599,9 +692,7 @@ def main():
       longitudinalPlan.brakeTestCommand = maneuver.brake_counts
       longitudinalPlan.brakeTestRelease = maneuver.brake_release
     stopping_intent = isinstance(maneuver, (StopManeuver, MovingCreepManeuver, BrakeCharacterizationManeuver)) and maneuver.stopping_intent
-    pulse_active = isinstance(maneuver, StopManeuver) and maneuver.pulse_active
-    # a creep pulse mimics the model: stop flag off at standstill with a slightly positive target
-    longitudinalPlan.shouldStop = stopping_intent or (should_stop(v_ego, accel) and not pulse_active)
+    longitudinalPlan.shouldStop = maneuver_should_stop(maneuver, v_ego, accel)
 
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = not stopping_intent
@@ -609,6 +700,8 @@ def main():
 
     # Suppress automatic resume throughout stop hold, timeout and takeover wait.
     longitudinalPlan.speeds = [0.] if stopping_intent else [0.2]
+    if isinstance(maneuver, CreepSpeedManeuver) and not stopping_intent:
+      longitudinalPlan.speeds = [maneuver.target_speed]
 
     pm.send('longitudinalPlan', plan_send)
 

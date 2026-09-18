@@ -108,6 +108,8 @@ def report(platform, route, _description, CP, ID, maneuvers):
 
       ax[1].grid(linewidth=4)
       ax[1].plot(t_carState, [m.vEgo for m in carState], 'g', label='vEgo', linewidth=6)
+      if description.startswith('creep speed:'):
+        ax[1].plot(t_longitudinalPlan, [m.speeds[0] for m in longitudinalPlan], '--', label='Target speed', linewidth=6)
       ax[1].set_ylabel('Velocity (m/s)')
       ax[1].legend()
 

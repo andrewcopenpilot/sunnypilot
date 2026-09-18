@@ -4,9 +4,65 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 <details><summary>Sample snapshot of a report.</summary><img width="600px" src="https://github.com/user-attachments/assets/d18d0c7d-2bde-44c1-8e86-1741ed442ad8"></details>
 
-## Current Volt default: brake characterization
+## Current Volt default: moving-creep speed tracking
 
-The default for the Volt ASCM in longitudinal maneuver mode is **six brake-exit
+The Volt ASCM default is **six speed profiles, two runs each: 12 attempts**.
+These exercise normal longitudinal control, including its acceleration PI and
+brake/torque transitions. They use no direct brake-count or mode override.
+
+For the Volt gateway with `STOCK_CREEP_TRANSITIONS` enabled, moving braking now
+uses **0xA**. **0xB** requires the controller's explicit stopping state as well as
+low speed. Brake exit uses **zero demand in 0x1**, the existing separate entry
+and release thresholds, and the existing AxleTorqueMin torque initialization.
+The transition thresholds, production PI gains and brake-demand scaling are
+unchanged. Other platforms and the disabled-feature baseline retain their mode
+selection.
+
+Every attempt first settles at **3 mph for two seconds**, then follows a timed
+speed reference. Ramps use **0.10 m/s²** in either direction. The test's acceleration
+request is ramp feedforward plus **0.5 × speed error**, limited to **±0.30 m/s²**.
+This outer speed correction defines the test trajectory; it does not change
+production acceleration PI gains. Intermediate targets have fixed holds, with
+**no stability requirement** to advance to the next phase.
+
+| ID | Speed sequence (mph) | Holds |
+|---|---|---|
+| C01 | 3 → 1.5 → 3 | 6 s at creep, 3 s at final 3 mph |
+| C02 | 3 → 1 → 3 | 6 s at creep, 3 s at final 3 mph |
+| C03 | 3 → 0.5 → 3 | 6 s at creep, 3 s at final 3 mph |
+| C04 | 3 → 1.5 → 2 → 1.5 → 2 → 1.5 → 3 | 5 s at each creep hold, 4 s at each 2 mph hold, 3 s at final 3 mph |
+| C05 | 3 → 1 → 2 → 1 → 2 → 1 → 3 | Same cycle holds |
+| C06 | 3 → 0.5 → 2 → 0.5 → 2 → 0.5 → 3 | Same cycle holds |
+
+Each profile runs twice consecutively. The complete suite has about **8.9 minutes
+of measured profiles**, plus setup and recovery. Completion means the timed
+profile finished, not that speed tracking passed a tolerance. Compare repeats
+using speed error during holds, overshoot, acceleration, pressure, mode switch
+count and axle torque. Keep full CAN rlogs.
+
+The automatic low-speed `should_stop(v_ego, accel)` heuristic is bypassed only
+during a moving-creep test. Explicit failure stops still take priority. Normal
+planning, stop maneuvers, setup and recovery retain the helper. A measured speed
+below **0.1 m/s (0.22 mph)**, above **1.8 m/s (4.03 mph)**, or either vehicle or
+cruise standstill indication aborts the new speed profile. This first suite tests
+down to **0.5 mph**, not 0.2 mph or launch from rest. The preserved older moving
+trials keep their original 0.4–1.5 m/s guards.
+
+The active alert shows **target and actual mph**. Requested speed is logged in
+`longitudinalPlan.speeds[0]`; the normal maneuver report overlays it on measured
+speed. Completed profiles recover automatically to 3 mph and advance after
+three seconds settled there. A failed profile shows **"Creep test invalid"** and
+requests stopping until a throttle tap or disengagement acknowledges it, then
+recovers and advances. Accelerator override or disengagement during an unfinished
+profile restarts that attempt from setup. Disengage before turning around.
+
+Use the existing `LongitudinalManeuverMode` parameter and instructions below.
+Only this selected suite runs. To repeat the previous brake-exit experiment, set
+`MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS` in `maneuversd.py`.
+
+## Preserved brake characterization suite
+
+The preserved `BRAKE_CHARACTERIZATION_MANEUVERS` suite contains **six brake-exit
 profiles, two runs each: 12 attempts total**. They compare zero demand in active
 mode **0xA** with zero demand in inactive mode **0x1**, including a delayed
 transition. The earlier release, hold and sweep suites are preserved separately.
@@ -98,12 +154,15 @@ check whether that location repeats. Speed integrates acceleration, so a bend
 in speed alone is not a steady-state brake calibration. No automatic inflection
 finder or fitted pressure model is used.
 
-The default profiles are built by `brake_exit_maneuvers()` in `maneuversd.py`.
+The brake-exit profiles are built by `brake_exit_maneuvers()` in `maneuversd.py`.
 Their descriptions include E01–E06, the mode, peak hold, and release sequence.
 The active alert shows the current requested count and mode. Compare each repeat
 separately and exclude fallback stopping commands after a guard triggers.
 
-To select a previous suite instead, set `MANEUVERS` to:
+To select a suite, set `MANEUVERS` to:
+
+- `CREEP_SPEED_MANEUVERS`: the current six speed-tracking profiles, two runs each.
+- `BRAKE_CHARACTERIZATION_MANEUVERS`: the six zero-demand brake-exit profiles, two runs each.
 
 - `BRAKE_RELEASE_MANEUVERS`: the previous 12 active-mode release profiles, two runs each.
 - `BRAKE_HOLD_MANEUVERS`: nine earlier 11/12/13-count hold-and-release attempts.
@@ -115,7 +174,7 @@ Only the selected suite runs.
 ## Preserved acceleration comparison suite
 
 The following section describes `STANDARD_MANEUVERS`, not the current Volt
-brake-exit default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
+speed-tracking default. Set `MANEUVERS = STANDARD_MANEUVERS` to run it again.
 
 The suite contains **22 runs: eleven creep scenarios, each repeated twice**. The
 original eight scenarios remain first, with identical active commands, durations,
@@ -250,7 +309,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt brake-exit suite, allow 12 attempts (six profiles, two runs each) and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt speed-tracking suite, allow 12 attempts (six profiles, two runs each); completed profiles advance automatically after recovery, while failed profiles require acknowledgement. For the preserved brake-exit suite, acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
    **Note:** Every run settles at 3 mph before the test and recovers to 3 mph afterward. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 
@@ -264,7 +323,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![image](https://github.com/user-attachments/assets/cfe4c6d9-752f-4b24-b421-4b90a01933dc)
 
-8. For the current brake-exit suite, use `plot_brake_characterization.py` above. For the preserved acceleration suite, gather the route ID and run the original report generator. The file will be exported to the same directory:
+8. For the preserved brake-characterization suites, use `plot_brake_characterization.py` above. For the current speed-tracking suite or preserved acceleration suite, gather the route ID and run the maneuver report generator. The file will be exported to the same directory:
 
     ```sh
     $ python openpilot/tools/longitudinal_maneuvers/generate_report.py 57048cfce01d9625/0000010e--5b26bc3be7 'Volt creep baseline'

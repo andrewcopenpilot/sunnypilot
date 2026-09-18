@@ -204,16 +204,44 @@ class TestVoltCreepCAN(unittest.TestCase):
   def test_scaled_demand_is_sent_on_can(self):
     for _ in range(10):
       mode, demand = self.update(-0.3)
-    self.assertEqual((mode, demand), (0xb, -24.))
+    self.assertEqual((mode, demand), (0xa, -24.))
     self.assertEqual(self.controller.apply_gas, -650.)
 
   def test_zero_demand_retains_active_path_until_torque_handoff(self):
-    self.assertEqual(self.update(-0.3)[0], 0xb)
+    self.assertEqual(self.update(-0.3)[0], 0xa)
     for _ in range(10):
       mode, demand = self.update(0.02)
-    self.assertEqual((mode, demand), (0xb, 0.))
+    self.assertEqual((mode, demand), (0xa, 0.))
     self.assertEqual(self.update(0.06), (0x1, 0.))
     self.assertEqual(self.controller.apply_gas, 100.)
+
+  def test_stop_intent_can_clear_below_near_stop_speed(self):
+    self.control.actuators.longControlState = "stopping"
+    self.assertEqual(self.update(-0.3)[0], 0xb)
+    self.control.actuators.longControlState = "pid"
+    # Resume ordinary braking without requiring speed to rise above 1.5 m/s.
+    self.assertEqual(self.update(-0.3)[0], 0xa)
+    self.assertEqual(self.update(0.06), (0x1, 0.))
+    self.assertEqual(self.controller.apply_gas, 100.)
+
+  def test_repeated_creep_release_and_reentry_has_no_mode_chatter(self):
+    for speed in (0.2, 0.5, 1.):
+      self.state.out.vEgo = speed
+      for _ in range(3):
+        for _ in range(20):
+          self.assertEqual(self.update(-0.3)[0], 0xa)
+        for _ in range(20):
+          self.assertEqual(self.update(0.02)[0], 0xa)
+        self.assertEqual(self.update(0.06), (0x1, 0.))
+        for accel in (0.04, 0.02, 0., -0.05, 0.04):
+          self.assertEqual(self.update(accel), (0x1, 0.))
+
+  def test_other_platforms_and_baseline_keep_speed_based_near_stop(self):
+    for controller in (make_controller(CAR.CHEVROLET_MALIBU), make_controller()):
+      if controller.CP.carFingerprint == CAR.CHEVROLET_VOLT and controller.CP.networkLocation == structs.CarParams.NetworkLocation.gateway:
+        controller.params.STOCK_CREEP_TRANSITIONS = False
+      self.controller = controller
+      self.assertEqual(self.update(-0.3)[0], 0xb)
 
   def test_disengagement_clears_retained_path(self):
     self.update(-0.3)

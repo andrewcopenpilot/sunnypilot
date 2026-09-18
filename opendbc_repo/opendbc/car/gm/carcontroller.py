@@ -70,14 +70,18 @@ class CarController(CarControllerBase):
     creep_weight = self.stock_creep_weight(CS, stopping)
     self.stock_creep_active = creep_weight > 0.
     margin = float(np.interp(v, p.BRAKE_ENTRY_MARGIN_BP, p.BRAKE_ENTRY_MARGIN_V))
-    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if was_braking else 0.)
-    if was_braking and self.stock_creep_active:
+    entry_thresh = a_regen + margin
+    release_thresh = entry_thresh + p.BRAKE_ENTRY_HYST
+    if self.stock_creep_active:
       retain_margin = float(np.interp(v, p.BRAKE_RETAIN_MARGIN_BP, p.BRAKE_RETAIN_MARGIN_V))
       # OEM branch using 0x81e=0, with disturbance correction omitted consistently on both paths.
       # Openpilot has no equivalent to the OEM request-state selector; do not invent a mapping.
       retain_thresh = a_regen + retain_margin
-      thresh += creep_weight * (retain_thresh - thresh)
-    self.brake_mode = accel < thresh or stopping
+      release_thresh += creep_weight * (retain_thresh - release_thresh)
+    # Corrected actuator acceleration includes integral feedback. Retaining zero
+    # counts in 0xA is not a full release: exit only at the release threshold,
+    # then send zero in 0x1 and initialize torque below. Re-entry has its own threshold.
+    self.brake_mode = stopping or accel < (release_thresh if was_braking else entry_thresh)
 
     if not self.brake_mode:
       # torque mode: physics feedforward on the gas/regen path, rate limited as stock, brakes idle
@@ -190,9 +194,14 @@ class CarController(CarControllerBase):
 
         at_full_stop = CC.longActive and CS.out.standstill
         # Measure ordinary braking (0xA): the 0xB baseline built pressure at zero demand.
-        # Abort/stopping paths retain the existing near-stop behavior.
+        # Direct characterization bypasses near-stop; aborts still request stopping.
         near_stop = (CC.longActive and self.brake_mode and not brake_test_running and
                      abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
+        if (self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.networkLocation == NetworkLocation.gateway and
+            self.params.STOCK_CREEP_TRANSITIONS):
+          # Moving creep needs ordinary 0xA, including a return from 0xB below
+          # the speed threshold. Low speed alone must not invoke the stop submode.
+          near_stop = near_stop and stopping
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
         # TODO: can we always check the longControlState?
