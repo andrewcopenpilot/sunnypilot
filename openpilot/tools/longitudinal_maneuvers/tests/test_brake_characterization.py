@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  BrakeCharacterizationManeuver, MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS, RECOVERY_SPEED, DT_MDL, brake_hold_maneuvers,
+  BrakeCharacterizationManeuver, MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS, BRAKE_SWEEP_MANEUVERS, RECOVERY_SPEED, DT_MDL,
 )
 
 
@@ -13,9 +13,8 @@ class TestBrakeProfiles(unittest.TestCase):
     self.assertTrue(m.brake_test_active)
     self.assertEqual(m.brake_counts, m.start_counts)
 
-  def test_default_sweep_rate_bounds_and_repeat_acknowledgement(self):
-    self.assertIs(MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS)
-    m = replace(MANEUVERS[0])
+  def test_preserved_sweep_rate_bounds_and_repeat_acknowledgement(self):
+    m = replace(BRAKE_SWEEP_MANEUVERS[0])
     self.assertEqual(m.duration, 64.)
     for repeat in range(3):
       self.start(m)
@@ -40,16 +39,52 @@ class TestBrakeProfiles(unittest.TestCase):
       self.assertTrue(m._run_completed)
       self.assertEqual(m.finished, repeat == 2)
 
-  def test_hold_levels_are_constant_for_five_seconds(self):
-    for m in brake_hold_maneuvers([1., 3., 5.]):
+  def test_default_holds_and_descending_release_repeat_from_fresh_start(self):
+    self.assertIs(MANEUVERS, BRAKE_CHARACTERIZATION_MANEUVERS)
+    self.assertEqual([m.max_counts for m in MANEUVERS], [11., 12., 13.])
+    self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 9)
+    for profile, duration in zip(MANEUVERS, (24., 31., 38.), strict=True):
+      m = replace(profile)
+      self.assertEqual(m.duration, duration)
+      for repeat in range(3):
+        self.start(m)
+        commands = []
+        for _ in range(round(m.duration / DT_MDL)):
+          self.assertEqual(m.get_accel(1., True, False, False), 0.)
+          self.assertTrue(m.brake_test_active)
+          commands.append(m.brake_counts)
+        peak_start = round((2. + (m.max_counts - 5.) / 0.5) / DT_MDL)
+        hold_frames = round(5. / DT_MDL)
+        expected_levels = list(range(int(m.max_counts), 9, -1))
+        self.assertEqual(commands[peak_start:], [float(level) for level in expected_levels for _ in range(hold_frames)])
+        self.assertEqual(commands[:round(2. / DT_MDL)], [5.] * round(2. / DT_MDL))
+        self.assertLess(m.get_accel(1., True, False, False), 0.)
+        self.assertFalse(m.brake_test_active)
+        self.assertTrue(m.stopping_intent)
+        self.assertFalse(m.finished)
+        m.get_accel(0., False, True, True, True)
+        for _ in range(round(3. / DT_MDL)):
+          m.get_accel(RECOVERY_SPEED, True, False, False)
+        self.assertTrue(m._run_completed)
+        self.assertEqual(m.finished, repeat == 2)
+
+  def test_release_phase_keeps_speed_guard_and_interruption_reset(self):
+    for interrupted in (False, True):
+      m = replace(MANEUVERS[-1])
       self.start(m)
-      hold_frames = 0
-      while m.active:
+      for _ in range(round(24. / DT_MDL)):
         m.get_accel(1., True, False, False)
-        if m.brake_test_active and m.brake_counts == m.max_counts:
-          hold_frames += 1
-      self.assertEqual(hold_frames, round(5. / DT_MDL))
-      self.assertTrue(m.stopping_intent)
+      self.assertEqual(m.brake_counts, 12.)
+      m.get_accel(0.4 if not interrupted else 1., not interrupted, False, False)
+      self.assertFalse(m.brake_test_active)
+      self.assertEqual(m.brake_counts, 0.)
+      if interrupted:
+        self.start(m)
+        self.assertEqual(m.brake_counts, 5.)
+        self.assertEqual(m._test_frames, 0)
+      else:
+        self.assertEqual(m._end_reason, 'lower speed bound')
+        self.assertTrue(m.stopping_intent)
 
   def test_bounds_terminate_with_reason_without_advancing_before_ack(self):
     for speed, standstill, css, reason in ((0.4, False, False, 'lower speed bound'),
@@ -78,6 +113,8 @@ class TestBrakeProfiles(unittest.TestCase):
 
   def test_invalid_profile_is_rejected(self):
     for kwargs in ({'max_counts': 21.}, {'max_counts': -1.}, {'start_counts': -1.}, {'start_counts': 5.5},
-                   {'start_counts': 6., 'max_counts': 5.}, {'counts_per_second': 1.}, {'hold_seconds': 100.}):
+                   {'start_counts': 6., 'max_counts': 5.}, {'counts_per_second': 1.}, {'hold_seconds': 100.},
+                   {'release_counts': (21.,)}, {'release_counts': (12., 13.)}, {'release_counts': (-1.,)},
+                   {'release_counts': (10.5,)}, {'release_hold_seconds': 0.}):
       with self.assertRaises(AssertionError):
         BrakeCharacterizationManeuver('invalid', [], **kwargs)

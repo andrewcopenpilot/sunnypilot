@@ -6,37 +6,50 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 ## Current Volt default: brake characterization
 
-The default for the Volt ASCM in longitudinal maneuver mode is now **three slow
-brake-command sweeps**, replacing the acceleration suite for this measurement.
-The older suite remains available below as `STANDARD_MANEUVERS`.
+The default for the Volt ASCM in longitudinal maneuver mode is **nine hold-and-release
+attempts**: three repeats each at 11, 12 and 13 EBCM counts. These replace the sweep
+for this measurement. The earlier sweep remains available as `BRAKE_SWEEP_MANEUVERS`,
+and the acceleration suite as `STANDARD_MANEUVERS`.
 
-Each sweep:
+Each attempt:
 
 1. Settle at **3 mph for two seconds** using normal control.
-2. Enter ordinary active brake mode **0xA** with **5 counts of brake demand for two seconds**.
-3. Ramp requested EBCM demand from **5 to 20 counts at 0.25 count/second**, then
-   hold the maximum for two seconds. CAN demand is rounded to whole counts;
-   the request is continuous, but the actuator receives discrete levels.
-4. End at the profile limit or if speed leaves **0.4–2.0 m/s (0.9–4.5 mph)**,
-   including a standstill indication. A full uninterrupted profile lasts 64 s;
-   an early speed-bound endpoint is still useful data, not a complete sweep.
-5. The screen says **"Brake test ended"** with the endpoint reason. Normal
-   stopping intent remains asserted until a throttle tap or disengagement.
-   Recover to **3 mph** after acknowledgement, then advance to the next repeat.
+2. Enter ordinary active brake mode **0xA** with **5 counts for two seconds**.
+3. Ramp from 5 to the selected level at **0.5 count/second**, then hold that exact
+   level for **five seconds**. This approach is faster than the last sweep to
+   leave more speed available for the release measurements.
+4. Step down one count at a time to **10 counts**, holding each level for **five
+   seconds**. The steps are deliberate changes in requested demand; pressure
+   response is still controlled by the EBCM.
+5. End at profile completion or if speed leaves **0.4–2.0 m/s (0.9–4.5 mph)**,
+   including a standstill indication. The same guards apply during descending
+   holds. A guarded endpoint is useful data, not a completed hold or release.
+6. The screen says **"Brake test ended"** with the endpoint reason. Stopping
+   intent remains asserted until a throttle tap or disengagement. Recover to
+   **3 mph** after acknowledgement, then advance to the next repeat.
 
-During the measured portion, the gas/regen request stays at **−650 Nm**, and the
-EBCM brake mode stays **0xA**, including at zero counts and below 1.5 m/s.
-The previous 0xB sweep developed pressure and slowed to the speed guard before
-any nonzero count was sent. The subsequent 0xA sweep first reported pressure at
-11–12 counts, so the current sweep starts at 5, extends to 20, and ramps at half
-the previous rate. Its description includes the mode, range, and rate in the UI
-and logs. Setup, recovery,
-and endpoint/invalid-command stopping retain their existing mode selection.
-PI correction, mode-transition
-thresholds, and the experimental 20% brake-demand scaling do not alter the
-requested sweep. The PI is reset while measuring; normal control handles setup,
-stopping, and recovery. Thus this measures the brake-command path without the
-acceleration controller adjusting the input underneath it.
+| Runs | Target hold | Descending holds | Full measured profile duration |
+|---|---|---|---|
+| 1–3 | 11 counts for 5 s | 10 for 5 s | 24 s |
+| 4–6 | 12 counts for 5 s | 11, then 10; 5 s each | 31 s |
+| 7–9 | 13 counts for 5 s | 12, 11, then 10; 5 s each | 38 s |
+
+Durations exclude setup, stopping, acknowledgement and recovery. Each repeat gets
+its own fresh 3 mph start. The description identifies the peak and release steps
+in the UI and logs; the active alert shows the current requested count.
+
+During measurement, the gas/regen request stays at **−650 Nm** and brake mode
+stays **0xA**, including during descending holds. Setup, recovery, and endpoint
+or invalid-command stopping retain their existing mode selection. PI correction,
+mode-transition thresholds, and the experimental brake-demand scaling do not
+alter these direct commands. PI is reset while measuring; normal control handles
+setup, stopping and recovery.
+
+The prior sweeps reported pressure onset around 11–12 counts and increasing
+pressure at 12–14. These holds measure repeatability and whether the same count
+behaves differently during application and release. They do not assume that
+five seconds is sufficient for equilibrium or that every release phase will
+complete before a speed guard.
 
 This is **EBCM demand characterization, not direct hydraulic-pressure control**:
 the EBCM still blends braking internally, and constant commanded gas/regen does
@@ -51,7 +64,7 @@ screen reports **"controller stopped test"** and waits for acknowledgement. Peda
 longitudinal control cancel the direct output. Normal driving defaults this path
 off. The old acceleration suite is used on unsupported configurations.
 
-### Plot the sweep, then select hold levels
+### Plot the holds and release response
 
 After fetching the route's full rlogs, run:
 
@@ -71,14 +84,17 @@ check whether that location repeats. Speed integrates acceleration, so a bend
 in speed alone is not a steady-state brake calibration. No automatic inflection
 finder or fitted pressure model is used.
 
-Once the sweep identifies a candidate region, select integer levels around it
-with `MANEUVERS = brake_hold_maneuvers([...])` in `maneuversd.py`. Levels must be
-between 0 and 20 counts. Each level gets **three separate runs**, ramping up at
-0.25 count/second from zero and then holding exactly that command for **five seconds**
-if speed remains in bounds. Each starts afresh at 3 mph so the previous level's
-pressure history does not define the next initial condition. Compare pressure,
-acceleration, speed range, and dwell time at matching commands. The hold levels
-are intentionally not selected before the sweep data exists.
+The selected profiles are built with `brake_hold_maneuvers([11., 12., 13.])` in
+`maneuversd.py`. The helper supports integer peaks from 0 to 20 and adds descending
+five-second holds down to 10 for peaks above 10. Peaks at/below 10 have no release
+sequence. The current suite starts at 5 counts; lower custom peaks start at their
+selected level instead. Compare application and release separately, using actual
+CAN commands and pressure history. Exclude fallback stopping commands after a
+guard triggers.
+
+To repeat the previous 5–20-count sweep at 0.25 count/second instead, set
+`MANEUVERS = BRAKE_SWEEP_MANEUVERS`. Selecting the hold suite does not also run
+that sweep or the older acceleration suite.
 
 ## Preserved acceleration comparison suite
 
@@ -218,7 +234,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt sweep, allow three attempts and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. For the default Volt hold suite, allow nine attempts and acknowledge each endpoint. For the preserved acceleration suite, allow 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
    **Note:** Every run settles at 3 mph before the test and recovers to 3 mph afterward. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 
