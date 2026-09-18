@@ -31,6 +31,18 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.assertEqual(self.controller.apply_gas, -650.)
         self.assertEqual(self.update(0.), (0xa, 0.))
 
+  def test_direct_release_holds_keep_mode_and_fixed_torque(self):
+    for release in (0., 5., 8.):
+      with self.subTest(release=release):
+        self.setUp()
+        self.state.out.vEgo = 0.8
+        for _ in range(100):  # Four seconds of application at 25 Hz.
+          self.assertEqual(self.update(12.), (0xa, -12.))
+        for _ in range(200):  # Eight-second release hold, including zero demand.
+          self.assertEqual(self.update(release), (0xa, -release))
+          self.assertEqual(self.controller.apply_gas, -650.)
+          self.assertFalse(self.controller.brake_test_failed)
+
   def test_stale_invalid_and_out_of_bounds_commands_stop(self):
     for case in ('stale', 'future', 'nan', 'negative', 'large', 'slow', 'fast', 'standstill', 'cruise_stop', 'invalid_can', 'stopping'):
       with self.subTest(case=case):

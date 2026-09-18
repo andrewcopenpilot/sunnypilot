@@ -292,6 +292,7 @@ class BrakeCharacterizationManeuver(Maneuver):
   hold_seconds: float = 2.
   release_counts: tuple[float, ...] = ()
   release_hold_seconds: float = 5.
+  release_final_hold_seconds: float | None = None
   _test_frames: int = 0
   _brake_counts: float = 0.
   _end_reason: str = ''
@@ -303,6 +304,7 @@ class BrakeCharacterizationManeuver(Maneuver):
     assert 0. < self.counts_per_second <= 0.5
     assert self.baseline_seconds >= 0. and self.hold_seconds >= 0.
     assert self.release_hold_seconds > 0.
+    assert self.release_final_hold_seconds is None or (self.release_counts and self.release_final_hold_seconds > 0.)
     assert all(0. <= level < previous and level == int(level)
                for previous, level in zip((self.max_counts, *self.release_counts[:-1]), self.release_counts, strict=False))
     assert self.duration <= 90.
@@ -310,8 +312,10 @@ class BrakeCharacterizationManeuver(Maneuver):
 
   @property
   def duration(self):
-    return (self.baseline_seconds + (self.max_counts - self.start_counts) / self.counts_per_second + self.hold_seconds +
-            len(self.release_counts) * self.release_hold_seconds)
+    release_duration = len(self.release_counts) * self.release_hold_seconds
+    if self.release_counts and self.release_final_hold_seconds is not None:
+      release_duration += self.release_final_hold_seconds - self.release_hold_seconds
+    return self.baseline_seconds + (self.max_counts - self.start_counts) / self.counts_per_second + self.hold_seconds + release_duration
 
   @property
   def stopping_intent(self):
@@ -339,7 +343,7 @@ class BrakeCharacterizationManeuver(Maneuver):
       return self._end('profile complete')
     release_start = self.baseline_seconds + (self.max_counts - self.start_counts) / self.counts_per_second + self.hold_seconds
     if self.release_counts and elapsed >= release_start:
-      index = int((elapsed - release_start) / self.release_hold_seconds)
+      index = min(int((elapsed - release_start) / self.release_hold_seconds), len(self.release_counts) - 1)
       self._brake_counts = float(self.release_counts[index])
     else:
       self._brake_counts = float(np.clip(self.start_counts + (elapsed - self.baseline_seconds) * self.counts_per_second,
@@ -383,6 +387,35 @@ def brake_hold_maneuvers(levels):
     maneuvers.append(BrakeCharacterizationManeuver(description, [], repeat=2, initial_speed=3. * CV.MPH_TO_MS,
                                                  start_counts=min(5., level), max_counts=level, counts_per_second=0.5,
                                                  hold_seconds=5., release_counts=release_counts))
+  return maneuvers
+
+
+def brake_release_maneuvers():
+  # Direct releases first: they are most likely to finish before the low-speed guard.
+  # Entries are (peak count, exact-peak hold seconds, descending levels, seconds per step).
+  profiles = [
+    (12., 4., (0.,), 8.),
+    (12., 4., (5.,), 8.),
+    (12., 4., (8.,), 8.),
+    (13., 3., (0.,), 8.),
+    (13., 3., (5.,), 8.),
+    (13., 3., (8.,), 8.),
+    (12., 4., (2.,), 8.),
+    (12., 4., (10.,), 8.),
+    (12., 2., (0.,), 8.),
+    (12., 2., (5.,), 8.),
+    (12., 4., (10., 8., 6., 4., 2., 0.), 1.5),
+    (12., 4., tuple(float(count) for count in range(11, -1, -1)), 1.5),
+  ]
+  maneuvers = []
+  for index, (peak, hold, releases, step_seconds) in enumerate(profiles, 1):
+    release_label = f"drop to {releases[0]:g} for 8s" if len(releases) == 1 else (
+      f"step -{peak - releases[0]:g} every {step_seconds:g}s to 0; hold 8s")
+    description = f"brake characterization: R{index:02d} mode 0xA, {peak:g} counts {hold:g}s; {release_label}"
+    maneuvers.append(BrakeCharacterizationManeuver(description, [], repeat=1, initial_speed=3. * CV.MPH_TO_MS,
+                                                 start_counts=5., max_counts=peak, counts_per_second=0.5,
+                                                 hold_seconds=hold, release_counts=releases, release_hold_seconds=step_seconds,
+                                                 release_final_hold_seconds=8.))
   return maneuvers
 
 
@@ -433,8 +466,9 @@ BRAKE_SWEEP_MANEUVERS = [
   BrakeCharacterizationManeuver("brake characterization: mode 0xA, 5 to 20 counts at 0.25 count/s", [],
                                repeat=2, initial_speed=3. * CV.MPH_TO_MS, start_counts=5.),
 ]
-# Sweeps located application at 11–12 counts. Compare fixed holds and pressure release.
-BRAKE_CHARACTERIZATION_MANEUVERS = brake_hold_maneuvers([11., 12., 13.])
+BRAKE_HOLD_MANEUVERS = brake_hold_maneuvers([11., 12., 13.])
+# Small descending commands retained pressure. Test deeper releases in active mode 0xA.
+BRAKE_CHARACTERIZATION_MANEUVERS = brake_release_maneuvers()
 MANEUVERS = BRAKE_CHARACTERIZATION_MANEUVERS
 
 
