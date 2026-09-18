@@ -249,23 +249,21 @@ class TestMovingCreepManeuvers(unittest.TestCase):
     return m
 
   def start(self, m):
-    for _ in range(round(2. / DT_MDL)):
-      m.get_accel(m.creep_speed, True, False, False)
+    m.get_accel(m.creep_speed, True, False, False)
     self.assertTrue(m.active)
     self.assertEqual(m._action_frames, 0)
 
-  def test_acquisition_requires_continuous_measured_crawl(self):
+  def test_acquisition_starts_on_first_crossing_without_settling(self):
     m = self.acquire()
-    for _ in range(39):
-      m.get_accel(m.creep_speed, True, False, False)
-    self.assertFalse(m.active)
-    m.get_accel(1.1, True, False, False)
-    self.assertEqual(m._ready_cnt, 0)
+    for speed in (1.3, 1.2, 1.25, 1.1, 1.01):
+      self.assertEqual(m.get_accel(speed, True, False, False), -0.15)
+      self.assertFalse(m.active)
     self.start(m)
-    self.assertEqual(m.get_accel(m.creep_speed, True, False, False), 0.)
+    # It continues even if speed immediately leaves the old settling band.
+    self.assertEqual(m.get_accel(0.65, True, False, False), 0.)
     self.assertEqual(m._action_frames, 1)
 
-  def test_invalid_crawl_latches_stop_until_disengagement(self):
+  def test_invalid_crawl_latches_stop_until_acknowledgement(self):
     for during_acquisition in (False, True):
       for speed, standstill, cruise_standstill in ((0.39, False, False), (0.8, True, False),
                                                   (0.8, False, True), (1.51, False, False)):
@@ -276,17 +274,36 @@ class TestMovingCreepManeuvers(unittest.TestCase):
           self.assertEqual(m.get_accel(speed, True, standstill, cruise_standstill), -0.3)
           self.assertTrue(m.stopping_intent)
           self.assertFalse(m.active)
-          # Even if the speed recovers or the driver taps throttle, the failed trial cannot resume.
           for _ in range(200):
-            self.assertEqual(m.get_accel(0.8, True, False, False, True), -0.3)
+            self.assertEqual(m.get_accel(0.8, True, False, False), -0.3)
             self.assertFalse(m._run_completed)
             self.assertFalse(m._recovering)
           self.assertFalse(m.finished)
+
+  def test_failed_attempt_recovers_and_advances_only_after_acknowledgement(self):
+    for gas_pressed, long_active in ((True, True), (True, False), (False, False)):
+      for final_run in (False, True):
+        m = self.acquire()
+        m._repeated = int(final_run)
+        self.start(m)
+        m.get_accel(0.2, True, False, False)
+        self.assertTrue(m.stopping_intent)
+        m.get_accel(0., long_active, True, True, gas_pressed)
+        self.assertTrue(m._recovering)
+        self.assertFalse(m.stopping_intent)
+        for _ in range(20):
           self.assertEqual(m.get_accel(0., False, True, True), 0.)
-          self.assertFalse(m.stopping_intent)
-          self.assertFalse(m._creep_setup)
-          self.assertEqual(m.setup_speed, SETUP_SPEED)
-          self.assertEqual(m._repeated, 0)
+          self.assertFalse(m._run_completed)
+        for _ in range(round(3. / DT_MDL)):
+          m.get_accel(SETUP_SPEED, True, False, False)
+        self.assertTrue(m._run_completed)
+        self.assertTrue(m._run_failed)
+        self.assertEqual(m._repeated, 1)
+        self.assertEqual(m.finished, final_run)
+        self.assertFalse(m.stopping_intent)
+        m.get_accel(SETUP_SPEED, True, False, False)
+        self.assertFalse(m._run_completed)
+        self.assertFalse(m._run_failed)
 
   def test_acquisition_timeout(self):
     m = self.acquire()

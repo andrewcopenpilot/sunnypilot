@@ -37,12 +37,29 @@ class TestVoltCreepTransitions(unittest.TestCase):
     self.assertFalse(self.controller.brake_mode)
     self.enter_braking()
     # Reducing brake demand must not relinquish the path, even when it reaches zero.
-    for accel in (-0.1, 0., 0.1):
+    for accel in (-0.1, 0., 0.02):
       for _ in range(10):
         gas, brake = self.controller.stock_gas_brake(accel, self.state, False)
       self.assertTrue(self.controller.brake_mode)
       self.assertEqual(gas, -650.)
       self.assertEqual(brake, 10 if accel < 0. else 0)
+
+  def test_small_positive_release_preserves_hysteresis(self):
+    # Earlier release is limited to moving creep and does not immediately re-enter
+    # braking when corrected demand fluctuates around the new release boundary.
+    for speed in (0.4, 0.8, 1.0):
+      with self.subTest(speed=speed):
+        self.controller = make_controller()
+        self.state = make_state(speed=speed)
+        self.enter_braking()
+        self.controller.stock_gas_brake(0.02, self.state, False)
+        self.assertTrue(self.controller.brake_mode)
+        self.controller.stock_gas_brake(0.06, self.state, False)
+        self.assertFalse(self.controller.brake_mode)
+        for accel in (0.04, 0.02, 0., -0.05, 0.04):
+          self.controller.stock_gas_brake(accel, self.state, False)
+          self.assertFalse(self.controller.brake_mode)
+        self.enter_braking()
 
   def test_torque_handoff_initializes_once(self):
     self.enter_braking()
@@ -142,14 +159,14 @@ class TestVoltCreepCAN(unittest.TestCase):
   def test_zero_demand_retains_active_path_until_torque_handoff(self):
     self.assertEqual(self.update(-0.3)[0], 0xb)
     for _ in range(10):
-      mode, demand = self.update(0.1)
+      mode, demand = self.update(0.02)
     self.assertEqual((mode, demand), (0xb, 0.))
-    self.assertEqual(self.update(0.4), (0x1, 0.))
+    self.assertEqual(self.update(0.06), (0x1, 0.))
     self.assertEqual(self.controller.apply_gas, 100.)
 
   def test_disengagement_clears_retained_path(self):
     self.update(-0.3)
-    self.update(0.1)
+    self.update(0.02)
     # CC.enabled can remain true for lateral control while longitudinal is inactive.
     self.control.longActive = False
     self.assertEqual(self.update(0.), (0x1, 0.))

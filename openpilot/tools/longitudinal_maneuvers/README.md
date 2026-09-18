@@ -17,8 +17,9 @@ Every run follows the same sequence:
 1. Accelerate to **8 mph** and stay near that speed for three seconds while showing
    the upcoming test.
 2. Slow to **3 mph** and settle there for **two continuous seconds**.
-3. Perform the creep test below. The three added moving tests first settle at
-   **0.8 m/s (1.8 mph)** for another two continuous seconds.
+3. Perform the creep test below. The three added moving tests first request
+   **-0.15 m/s²** and start their timed commands on the first downward crossing of
+   **1.0 m/s (2.2 mph)**; they do not require stable creep.
 4. Return to **8 mph** and stay near that speed for three seconds before advancing.
    Stop-and-hold tests wait for driver acknowledgement first, as described below.
 
@@ -45,13 +46,18 @@ is speed holding, not a guarantee of zero gas or brake actuation.
 ### Added moving transition trials (runs 17–22)
 
 The earlier timed crawl could overshoot into the stopping controller before its
-zero-acceleration interval. These additions separate measured crawl acquisition
-from the timed commands. After the usual 8 mph and 3 mph setup, speed must remain
-within 0.1 m/s of 0.8 m/s for two continuous seconds. Only then does the active
-trial begin. Acquisition uses the existing setup speed controller; the active
-trial sends the acceleration profile directly, with no added speed correction.
+zero-acceleration interval. After the usual 8 mph and 3 mph setup, these additions
+request a fixed -0.15 m/s² until measured speed first reaches 1.0 m/s or below.
+The timed profile starts immediately after that crossing, without a speed-hold
+or acceleration-settling requirement. The former two-second hold near 1.8 mph
+blocked every added trial in route 68, so it is no longer a prerequisite.
 
-| Runs | Commands after acquiring 0.8 m/s | What it measures |
+Both approach and active commands are acceleration requests without added speed
+correction. The initial speed and acceleration remain visible in the rlogs;
+compare those initial conditions when evaluating different drives. Starting at
+1.0 m/s leaves more room for braking overshoot before the low-speed guard.
+
+| Runs | Commands after crossing 1.0 m/s | What it measures |
 |---|---|---|
 | 17–18 | -0.15 for 0.5 s, then 0 for 6 s | speed drift, residual braking, and brake-mode chatter near zero requested acceleration |
 | 19–20 | -0.15 for 0.5 s; 0, +0.05, -0.05, +0.15, -0.05 for 1 s each; +0.3 and -0.15 for 0.75 s each; 0 for 1 s | small positive requests while braking, followed by torque handoff and brake re-entry |
@@ -64,9 +70,12 @@ speed stays steady; it does not impose a target speed during the active trial.
 
 During acquisition or the active trial, standstill, speed below **0.4 m/s**, or
 speed above **1.5 m/s** invalidates the run. Acquisition also times out after
-**20 seconds**. The screen shows **"Creep test invalid: take control"** with the
-reason. Stopping intent stays asserted until disengagement. Re-engage to retry
-the same run from the 8 mph setup; failed attempts do not advance the suite.
+**20 seconds**. The screen shows **"Creep test invalid: tap throttle or disengage"** with the
+reason. Until acknowledgement,
+stopping intent stays asserted. Then recover to 8 mph with longitudinal control
+active; that failed attempt advances to the next repetition or scenario so one
+poorly tracked trial cannot block the rest. Its outcome is logged as **failed**,
+not completed. Interruptions before any failure still retry the same attempt.
 The report marks an aborted active trial invalid; acquisition failures are
 logged but have no active interval to plot. Normal stop/resume logic is retained.
 
@@ -75,8 +84,8 @@ These trials exercise moving control above the GM standstill threshold, not
 regression checks for those transitions. For analysis, compare acceleration
 error, speed drift, brake-mode switch count, pressure release, and torque jump
 at handoff alongside `AxleTorqueMin`. The added trials need their own baseline
-run with the old controller for an exact before/after comparison; the first 16
-runs can be compared directly with the previous drive.
+run with the old controller and the same revised entry procedure for an exact
+before/after comparison; the first 16 runs can be compared directly with the previous drive.
 
 ### Stops, recovery, and status
 
@@ -90,8 +99,8 @@ to acknowledge the completed hold. The tool releases stopping intent and recover
 move above the minimum engagement speed (3 mph on this branch), and re-engage to
 recover. Completed stop holds do not automatically launch without acknowledgement.
 
-The two original timed crawl tests and the three added moving trials enter recovery
-automatically after their timed commands.
+The two original timed crawl tests and successful added moving trials enter recovery
+automatically after their timed commands. Failed moving trials wait for acknowledgement first.
 If stock cruise holds the car stopped, tap the throttle when **"Test complete: tap throttle"** appears.
 While moving, the screen says **"Recovering to 8 mph"**. A run is only counted after
 the 8 mph recovery has settled. This includes the final run; then the screen shows
@@ -108,7 +117,7 @@ to retry the same run. Interrupting setup or an unfinished test also restarts th
 run from the 8 mph setup. Interrupting recovery pauses it; re-engagement resumes
 recovery without repeating the completed test.
 
-Alerts identify the run number and phase. Phase changes and completed trials are
+Alerts identify the run number and phase. Phase changes, failed attempts, and completed trials are
 also written to the log. Keep full rlogs, including CAN, for torque and controller
 analysis; the generated report alone does not include all of that feedback.
 
@@ -129,7 +138,7 @@ each route, and keep the same road direction when comparing tunes.
 
    ![videoframe_6652](https://github.com/user-attachments/assets/e9d4c95a-cd76-4ab7-933e-19937792fa0f)
 
-5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 22 successful runs. The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition trials. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over.
+5. Ensure the road ahead is clear, as openpilot will not brake for any obstructions in this mode. Once you are ready, press "Set" on your steering wheel to start the tests. Allow time for 16 original runs and six added moving attempts (22 total). The first 12 are stop-and-hold trials requiring acknowledgement before recovery; the next four are the original timed crawl trials, followed by six moving transition attempts. A failed moving attempt requires acknowledgement and recovery before advancing. Press "Cancel" to disengage before turning around. Re-engage only when ready on the next clear, straight section; an interrupted trial starts over unless it has already failed and is awaiting acknowledgement.
 
    **Note:** Every run reaches 8 mph before slowing to 3 mph for the test, then returns to 8 mph. Review the stop acknowledgement and timeout behavior above before enabling maneuver mode.
 

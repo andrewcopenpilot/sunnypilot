@@ -213,12 +213,13 @@ class StopManeuver(Maneuver):
 
 @dataclass
 class MovingCreepManeuver(Maneuver):
-  """Acquire a measured crawl before starting timed acceleration commands."""
-  creep_speed: float = 0.8  # m/s, above GM's standstill threshold
+  """Start timed commands on a speed crossing, without requiring stable creep."""
+  creep_speed: float = 1.0  # m/s, start on the downward crossing with room before standstill
   acquisition_timeout: float = 20.
   _creep_setup: bool = False
   _acquisition_frames: int = 0
   _failure: str = ''
+  _run_failed: bool = False
 
   @property
   def setup_speed(self):
@@ -226,18 +227,28 @@ class MovingCreepManeuver(Maneuver):
 
   @property
   def stopping_intent(self):
-    return bool(self._failure)
+    return bool(self._failure) and not self._recovering and not self.finished
 
   def _setup(self, v_ego, cruise_standstill):
+    if self._creep_setup:
+      # A fixed gentle approach exposes poor creep tracking instead of gating on it.
+      if v_ego <= self.creep_speed:
+        self._active = True
+        self._interrupted = False
+      return -0.15
     accel = super()._setup(v_ego, cruise_standstill)
     if self._active and not self._creep_setup:
-      # Preserve the 8 mph -> 3 mph setup, then settle at the measured crawl speed.
+      # Preserve the 8 mph -> 3 mph setup, then brake toward the entry speed.
       self._active = False
       self._creep_setup = True
     return accel
 
   def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
     self._run_completed = False
+    self._run_failed = False
+    if self.stopping_intent and (gas_pressed or not long_active):
+      self._recovering = True
+      self._ready_cnt = 0
     if long_active and self._creep_setup and not self._recovering and not self.finished:
       if not self._failure:
         if standstill or cruise_standstill or v_ego < 0.4:
@@ -250,16 +261,24 @@ class MovingCreepManeuver(Maneuver):
             self._failure = 'crawl setup timed out'
       if self._failure:
         # Do not let an unintended stop turn into a successful timed crawl trial.
-        # Hold stopping intent until disengagement, then retry this same run.
+        # Wait for acknowledgement before recovering and advancing this failed attempt.
         self._active = False
         return -0.3
     return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
+
+  def _recover(self, v_ego, cruise_standstill):
+    failure = self._failure
+    accel = super()._recover(v_ego, cruise_standstill)
+    # Repetition reset clears _failure; preserve the outcome for this frame's log.
+    self._run_failed = self._run_completed and bool(failure)
+    return accel
 
   def reset(self):
     super().reset()
     self._creep_setup = False
     self._acquisition_frames = 0
     self._failure = ''
+    self._run_failed = False
 
 
 # Creep-only suite: 8 scenarios, each run twice. Every run first reaches 8 mph,
@@ -346,8 +365,8 @@ def main():
       accel = maneuver.get_accel(v_ego, sm['carControl'].longActive, sm['carState'].standstill,
                                  sm['carState'].cruiseState.standstill, sm['carState'].gasPressed)
 
-      if isinstance(maneuver, MovingCreepManeuver) and maneuver._failure:
-        alert_msg.alertDebug.alertText1 = f'Creep test invalid: take control ({maneuver._failure})'
+      if isinstance(maneuver, MovingCreepManeuver) and maneuver.stopping_intent:
+        alert_msg.alertDebug.alertText1 = f'Creep test invalid: tap throttle or disengage ({maneuver._failure})'
       elif isinstance(maneuver, StopManeuver) and maneuver._failed:
         alert_msg.alertDebug.alertText1 = 'Stop timed out: take control'
       elif isinstance(maneuver, StopManeuver) and maneuver._complete:
@@ -361,7 +380,7 @@ def main():
       elif maneuver._interrupted:
         alert_msg.alertDebug.alertText1 = f'Restarting: setup at {maneuver.setup_speed * CV.MS_TO_MPH:.0f} mph'
       elif isinstance(maneuver, MovingCreepManeuver) and maneuver._creep_setup and not maneuver.active:
-        alert_msg.alertDebug.alertText1 = f'Setting up: settle at {maneuver.creep_speed * CV.MS_TO_MPH:.1f} mph'
+        alert_msg.alertDebug.alertText1 = f'Setting up: slowing through {maneuver.creep_speed * CV.MS_TO_MPH:.1f} mph'
       elif maneuver.active:
         alert_msg.alertDebug.alertText1 = f'Maneuver Active: {accel:0.2f} m/s^2'
       else:
@@ -369,7 +388,8 @@ def main():
       alert_msg.alertDebug.alertText1 += f' (run {run_number}/{maneuver.repeat + 1})'
       alert_msg.alertDebug.alertText2 = maneuver.description
       if maneuver._run_completed:
-        cloudlog.info("longitudinal maneuver completed: %s | run %d/%d", maneuver.description, run_number, maneuver.repeat + 1)
+        outcome = 'failed' if isinstance(maneuver, MovingCreepManeuver) and maneuver._run_failed else 'completed'
+        cloudlog.info("longitudinal maneuver %s: %s | run %d/%d", outcome, maneuver.description, run_number, maneuver.repeat + 1)
     else:
       alert_msg.alertDebug.alertText1 = 'Maneuvers Finished'
 

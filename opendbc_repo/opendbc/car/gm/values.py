@@ -63,9 +63,11 @@ class CarControllerParams:
 
   # OEM-inspired moving-creep transitions for the Volt ASCM; toggle for baseline comparisons.
   STOCK_CREEP_TRANSITIONS = True
-  # OEM accessory 23366550, table 0x708: retention margin while already in brake mode.
+  # Moving-creep trial: half the OEM accessory 23366550 table 0x708 margin
+  # ([0.250, 0.200, 0.200]). Route 68 retained braking through excessive deceleration;
+  # this lowers release demand while preserving hysteresis and small-positive retention.
   BRAKE_RETAIN_MARGIN_BP = [0., 5., 30.]
-  BRAKE_RETAIN_MARGIN_V = [0.250, 0.200, 0.200]
+  BRAKE_RETAIN_MARGIN_V = [0.125, 0.100, 0.100]
   # Integration choice: restrict the change to creep; this speed blend is not an OEM calibration.
   STOCK_CREEP_BLEND_BP = [1.0, 1.5]  # m/s, full retention margin below 1.0; baseline above 1.5
 
