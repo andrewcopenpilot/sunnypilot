@@ -154,6 +154,7 @@ class CarController(CarControllerBase):
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
+        brake_test_running = False
         test_requested = CC.enabled and CC.brakeTestActive and brake_test_enabled(self.CP, self.CP_SP)
         if not test_requested or not CC.longActive or CS.out.gasPressed or CS.out.brakePressed:
           self.brake_test_failed = False
@@ -168,6 +169,7 @@ class CarController(CarControllerBase):
           if not self.brake_test_failed and not stopping and brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out):
             # Characterize the EBCM with fixed gas/regen and direct counts. Bypass PI
             # mapping, creep scaling and mode selection only for this explicit test.
+            brake_test_running = True
             self.brake_mode = True
             self.stock_creep_active = True  # retain active brake mode even at zero counts
             self.gas_cmd = self.apply_gas = self.params.MAX_ACC_REGEN
@@ -185,8 +187,10 @@ class CarController(CarControllerBase):
         idx = (self.frame // 4) % 4
 
         at_full_stop = CC.longActive and CS.out.standstill
-        # stock brake sub-mode 3: only while braking below 1.5 m/s
-        near_stop = CC.longActive and self.brake_mode and (abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
+        # Measure ordinary braking (0xA): the 0xB baseline built pressure at zero demand.
+        # Abort/stopping paths retain the existing near-stop behavior.
+        near_stop = (CC.longActive and self.brake_mode and not brake_test_running and
+                     abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
         # TODO: can we always check the longControlState?

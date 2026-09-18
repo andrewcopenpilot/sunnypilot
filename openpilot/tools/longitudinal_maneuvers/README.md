@@ -13,7 +13,7 @@ The older suite remains available below as `STANDARD_MANEUVERS`.
 Each sweep:
 
 1. Settle at **3 mph for two seconds** using normal control.
-2. Enter active brake mode with **zero brake demand for two seconds**.
+2. Enter ordinary active brake mode **0xA** with **zero brake demand for two seconds**.
 3. Ramp requested EBCM demand from **0 to 12 counts at 0.5 count/second**, then
    hold the maximum for two seconds. CAN demand is rounded to whole counts;
    the request is continuous, but the actuator receives discrete levels.
@@ -25,9 +25,12 @@ Each sweep:
    Recover to **3 mph** after acknowledgement, then advance to the next repeat.
 
 During the measured portion, the gas/regen request stays at **−650 Nm**, and the
-EBCM brake mode stays active even at zero counts. The normal near-stop submode
-still changes at 1.5 m/s; the report includes the CAN mode so that change is not
-confused with a brake-demand threshold. PI correction, mode-transition
+EBCM brake mode stays **0xA**, including at zero counts and below 1.5 m/s.
+The previous 0xB sweep developed pressure and slowed to the speed guard before
+any nonzero count was sent. This repeat changes only the measured brake submode;
+its description includes 0xA to identify it in the UI and logs. Setup, recovery,
+and endpoint/invalid-command stopping retain their existing mode selection.
+PI correction, mode-transition
 thresholds, and the experimental 20% brake-demand scaling do not alter the
 requested sweep. The PI is reset while measuring; normal control handles setup,
 stopping, and recovery. Thus this measures the brake-command path without the

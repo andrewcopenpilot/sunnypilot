@@ -357,7 +357,7 @@ class BrakeCharacterizationManeuver(Maneuver):
 
 def brake_hold_maneuvers(levels):
   # Fill levels from the sweep results; each level gets its own fresh 3 mph start.
-  return [BrakeCharacterizationManeuver(f"brake characterization: hold {level:g} counts for 5s", [],
+  return [BrakeCharacterizationManeuver(f"brake characterization: mode 0xA hold {level:g} counts for 5s", [],
                                        repeat=2, initial_speed=3. * CV.MPH_TO_MS, max_counts=level, hold_seconds=5.)
           for level in levels]
 
@@ -406,7 +406,7 @@ MOVING_CREEP_MANEUVERS = [
 ]
 STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + MOVING_CREEP_MANEUVERS
 BRAKE_CHARACTERIZATION_MANEUVERS = [
-  BrakeCharacterizationManeuver("brake characterization: 0 to 12 counts at 0.5 count/s", [],
+  BrakeCharacterizationManeuver("brake characterization: mode 0xA, 0 to 12 counts at 0.5 count/s", [],
                                repeat=2, initial_speed=3. * CV.MPH_TO_MS),
 ]
 # First locate the response change in the sweep logs. Then use brake_hold_maneuvers([...])

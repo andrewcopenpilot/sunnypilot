@@ -22,10 +22,14 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     return fixtures.TestVoltCreepCAN.update(self, -0.3)
 
   def test_every_integer_demand_bypasses_creep_scaling_and_keeps_mode(self):
-    for command in range(13):
-      self.assertEqual(self.update(command), (0xb, -float(command)))
-      self.assertEqual(self.controller.apply_gas, -650.)
-    self.assertEqual(self.update(0.), (0xb, 0.))
+    for speed in (0.41, 1.0, 1.75):
+      with self.subTest(speed=speed):
+        self.setUp()
+        self.state.out.vEgo = speed
+        for command in range(13):
+          self.assertEqual(self.update(command), (0xa, -float(command)))
+          self.assertEqual(self.controller.apply_gas, -650.)
+        self.assertEqual(self.update(0.), (0xa, 0.))
 
   def test_stale_invalid_and_out_of_bounds_commands_stop(self):
     for case in ('stale', 'future', 'nan', 'negative', 'large', 'slow', 'fast', 'standstill', 'cruise_stop', 'invalid_can', 'stopping'):
@@ -53,7 +57,8 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
         else:
           self.control.actuators.longControlState = 'stopping'
         for _ in range(10):
-          _, demand = self.update(command, fresh=fresh)
+          mode, demand = self.update(command, fresh=fresh)
+        self.assertEqual(mode, 0xa if case == 'fast' else 0xd if case == 'cruise_stop' else 0xb)
         self.assertEqual(demand, -175. if case == 'fast' else -150.)
         self.assertFalse(self.controller.stock_creep_active)
 
@@ -106,8 +111,8 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     self.update(3.)
     self.control.brakeTestActive = False
     for _ in range(10):
-      _, demand = self.update(3.)
-    self.assertEqual(demand, -24.)
+      mode, demand = self.update(3.)
+    self.assertEqual((mode, demand), (0xb, -24.))
 
 
 class TestBrakeTestForwarding(unittest.TestCase):
