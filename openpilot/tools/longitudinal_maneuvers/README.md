@@ -35,14 +35,15 @@ branch includes it in `panda/board/obj/panda_h7.bin.signed`; pulling source alon
 does not compile firmware. After deploying the binary and restarting, pandad
 automatically flashes it when the firmware signature differs. The DBC and CAN
 checksum already support signed values. Panda accepts positive signed demand in
-**0xA**, with longitudinal actuation allowed, and at most **+14 counts**, through
+**0xA**, with longitudinal actuation allowed, and at most **+200 counts (+2.0 m/s²)**, through
 the common GM brake-command check. There is no test-specific, EV, or ASCM gate.
-The existing negative-demand brake limit and transmit allowlists are unchanged:
+The existing **−400-count** negative-demand brake limit and transmit allowlists are unchanged:
 configurations without brake-message transmit permission still cannot send it.
 Panda independently checks message/bus permission, mode, sign, bounds and
 actuation permission.
 Direct-command generation still requires Volt maneuver mode in the host; its
-speed/freshness guards remain active. Normal driving control is unchanged and
+speed/freshness guards remain active. The characterization limit stays at **+14
+signed counts**, and all test steps are unchanged. Normal driving control is unchanged and
 does not yet generate positive EBCM requests.
 
 Look for pressure before the positive step, partial versus complete pressure

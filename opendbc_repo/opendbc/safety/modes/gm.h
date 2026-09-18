@@ -127,9 +127,9 @@ static bool gm_tx_hook(const CANPacket_t *msg) {
     const int request = to_signed(raw, 12);
     if (request > 0) {
       // Signed acceleration targets use the shared GM brake-command protocol.
-      // Keep positive requests bounded separately from braking magnitude.
+      // Limit positive requests to 2.0 m/s^2 (0.01 m/s^2 per count).
       const int mode = msg->data[0] >> 4;
-      tx = get_longitudinal_allowed() && (mode == 0xA) && (request <= 14);
+      tx = get_longitudinal_allowed() && (mode == 0xA) && (request <= 200);
     } else if (longitudinal_brake_checks(-request, *gm_long_limits)) {
       tx = false;
     }
