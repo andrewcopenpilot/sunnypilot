@@ -2,7 +2,7 @@ import unittest
 from dataclasses import replace
 
 from openpilot.tools.longitudinal_maneuvers.maneuversd import (
-  DT_MDL, MANEUVERS, SIGNED_BRAKE_MANEUVERS, RECOVERY_SPEED, maneuver_should_stop,
+  DT_MDL, SIGNED_BRAKE_MANEUVERS as MANEUVERS, RECOVERY_SPEED, maneuver_should_stop,
 )
 
 
@@ -13,7 +13,6 @@ class TestCreepSignedBrake(unittest.TestCase):
     self.assertTrue(m.brake_test_active)
 
   def test_speed_crossing_then_timed_steps_and_repeats(self):
-    self.assertIs(MANEUVERS, SIGNED_BRAKE_MANEUVERS)
     self.assertEqual(len(MANEUVERS), 6)
     self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 12)
     for template, level in zip(MANEUVERS, (3., 6., 10., 15., 20., 200.), strict=True):

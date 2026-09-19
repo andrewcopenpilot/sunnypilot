@@ -42,22 +42,11 @@ class CarController(CarControllerBase):
     self.brake_mode = False       # False: torque mode (stock mode 1), True: friction-brake mode (stock mode 2)
     self.brake_accel_cmd = 0.     # rate-limited brake-path accel command, m/s^2
     self.gas_cmd = 0.             # rate-limited torque-mode GasRegenCmd, Nm
-    self.stock_creep_active = False
     self.brake_test_failed = False
 
-  def stock_creep_weight(self, CS, stopping):
-    # Hold/resume has additional OEM states; retain the existing stop/start sequence for now.
-    if (not self.params.STOCK_CREEP_TRANSITIONS or self.CP.carFingerprint != CAR.CHEVROLET_VOLT or
-        self.CP.networkLocation != NetworkLocation.gateway or CS.out.vEgo <= 0. or
-        stopping or CS.out.standstill or CS.out.cruiseState.standstill):
-      return 0.
-    return float(np.interp(CS.out.vEgo, self.params.STOCK_CREEP_BLEND_BP, [1., 0.]))
-
   def stock_gas_brake(self, accel, CS, stopping):
-    """OEM-inspired gas (Nm) and brake (counts) allocation from corrected acceleration.
-    Uses FUN_0013afc0/0013a360 transitions in moving creep, with the existing stop/start path.
-    The OEM request-state selector and disturbance compensation are not ported here.
-    """
+    """Gas (Nm) and brake (counts) the way the stock ASCM derives them from an accel target.
+    Mirrors FUN_0013afc0 (mode select), FUN_0013a360 (torque path) and FUN_00131440 (brake path)."""
     p = self.params
     v = CS.out.vEgo
     dt = 4 * DT_CTRL  # 25 Hz
@@ -66,44 +55,24 @@ class CarController(CarControllerBase):
     t_min = CS.axle_torque_min if CS.axle_torque_min_valid else p.MAX_ACC_REGEN
     a_regen = p.regen_accel_available(t_min, v)
 
-    was_braking = self.brake_mode
-    creep_weight = self.stock_creep_weight(CS, stopping)
-    self.stock_creep_active = creep_weight > 0.
+    # mode select with hysteresis; stock is always in brake mode through a stop
     margin = float(np.interp(v, p.BRAKE_ENTRY_MARGIN_BP, p.BRAKE_ENTRY_MARGIN_V))
-    entry_thresh = a_regen + margin
-    release_thresh = entry_thresh + p.BRAKE_ENTRY_HYST
-    if self.stock_creep_active:
-      retain_margin = float(np.interp(v, p.BRAKE_RETAIN_MARGIN_BP, p.BRAKE_RETAIN_MARGIN_V))
-      # OEM branch using 0x81e=0, with disturbance correction omitted consistently on both paths.
-      # Openpilot has no equivalent to the OEM request-state selector; do not invent a mapping.
-      retain_thresh = a_regen + retain_margin
-      release_thresh += creep_weight * (retain_thresh - release_thresh)
-    # Corrected actuator acceleration includes integral feedback. Retaining zero
-    # counts in 0xA is not a full release: exit only at the release threshold,
-    # then send zero in 0x1 and initialize torque below. Re-entry has its own threshold.
-    self.brake_mode = stopping or accel < (release_thresh if was_braking else entry_thresh)
+    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if self.brake_mode else 0.)
+    self.brake_mode = accel < thresh or stopping
 
     if not self.brake_mode:
       # torque mode: physics feedforward on the gas/regen path, rate limited as stock, brakes idle
       target = float(np.clip(p.torque_ff(accel, v), p.MAX_ACC_REGEN, p.MAX_GAS))
       up = float(np.interp(v, p.GAS_RATE_UP_BP, p.GAS_RATE_UP_V)) * dt
-      if (self.stock_creep_active and was_braking and CS.axle_torque_min_valid and
-          np.isfinite(CS.axle_torque_min)):
-        # OEM FUN_0013a360 seeds the first torque-mode output from 0x1C5 minimum torque.
-        # This intentionally differs from slewing out of the stored -650 Nm brake-mode request.
-        self.gas_cmd = float(np.clip(CS.axle_torque_min, p.MAX_ACC_REGEN, p.MAX_GAS))
-      else:
-        self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
+      self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
       self.brake_accel_cmd = 0.
       return self.gas_cmd, 0
 
     # brake mode: fixed max ACC regen request (stock cal 0x834), whole decel target on the brake path
     self.gas_cmd = p.MAX_ACC_REGEN
-    # Reduce moving-creep demand before the existing bounds and slew limit. Mode
-    # selection still uses the unscaled corrected acceleration; integral feedback
-    # can continue increasing demand up to the existing brake limit.
-    brake_scale = 1. - creep_weight * (1. - p.CREEP_BRAKE_SCALE)
-    target = min(accel, 0.) * brake_scale
+    # The EBCM request is signed acceleration. Between the entry and release thresholds braking is
+    # retained and the request may go positive to release it; zero counts in 0xA hold speed against creep.
+    target = min(accel, 0.) if stopping or CS.out.standstill or CS.out.cruiseState.standstill else accel
     target = max(target, float(np.interp(v, p.STOCK_DECEL_FLOOR_BP, p.STOCK_DECEL_FLOOR_V)), p.ACCEL_MIN)
     step = p.BRAKE_JERK_LIMIT * dt
     self.brake_accel_cmd = float(np.clip(target, self.brake_accel_cmd - step, self.brake_accel_cmd + step))
@@ -168,7 +137,6 @@ class CarController(CarControllerBase):
           self.apply_brake = 0
           self.brake_mode = False
           self.brake_accel_cmd = 0.
-          self.stock_creep_active = False
         elif test_requested:
           if (not self.brake_test_failed and not stopping and
               brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out, CC.brakeTestRelease)):
@@ -176,8 +144,6 @@ class CarController(CarControllerBase):
             # mapping, creep scaling and mode selection only for this explicit test.
             brake_test_running = True
             self.brake_mode = not CC.brakeTestRelease
-            # Zero-demand release uses the normal inactive path in the CAN helper.
-            self.stock_creep_active = self.brake_mode
             self.gas_cmd = self.apply_gas = self.params.MAX_ACC_REGEN
             self.apply_brake = int(round(CC.brakeTestCommand))
             self.brake_accel_cmd = -self.apply_brake / self.params.BRAKE_COUNTS_PER_MPS2
@@ -197,10 +163,8 @@ class CarController(CarControllerBase):
         # Direct characterization bypasses near-stop; aborts still request stopping.
         near_stop = (CC.longActive and self.brake_mode and not brake_test_running and
                      abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
-        if (self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.networkLocation == NetworkLocation.gateway and
-            self.params.STOCK_CREEP_TRANSITIONS):
-          # Moving creep needs ordinary 0xA, including a return from 0xB below
-          # the speed threshold. Low speed alone must not invoke the stop submode.
+        if self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.networkLocation == NetworkLocation.gateway:
+          # Low speed alone must not invoke the stop submode: moving braking needs ordinary 0xA.
           near_stop = near_stop and stopping
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
@@ -224,8 +188,7 @@ class CarController(CarControllerBase):
                                                        idx, gas_regen_active, at_full_stop))
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                              idx, CC.enabled, near_stop, at_full_stop, self.CP,
-                                                             brake_active=(CC.longActive and self.stock_creep_active and
-                                                                           self.brake_mode)))
+                                                             brake_active=CC.longActive and self.brake_mode))
 
         # Send dashboard UI commands (ACC status)
         send_fcw = hud_alert == VisualAlert.fcw

@@ -4,7 +4,38 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 <details><summary>Sample snapshot of a report.</summary><img width="600px" src="https://github.com/user-attachments/assets/d18d0c7d-2bde-44c1-8e86-1741ed442ad8"></details>
 
-## Current Volt default: signed EBCM acceleration requests
+## Current Volt default: closed-loop signed brake requests
+
+`SIGNED_CLOSED_LOOP_MANEUVERS` runs six profiles twice each (12 attempts) through
+the normal controller; nothing is commanded directly. It is the drive test for the
+signed brake request in `gm/carcontroller.py`. The allocator is the original two-mode
+one with two changes and no speed or creep terms: the brake request is no longer clamped
+at zero, and braking is retained until the corrected request is 0.32 m/s² above the entry
+threshold (was 0.05). Inside that band the request can go positive and release the brakes
+in 0xA. Stopping and standstill stay unsigned.
+
+Drive it on level ground first, then repeat C04 and S01 on a mild uphill and downhill.
+
+| ID | Profile | Road failure it reproduces |
+|---|---|---|
+| C04 | 3 → 1.5 → 2 → 1.5 → 2 → 1.5 → 3 mph | Route 78: release/reapply oscillation in creep holds |
+| C05 | 3 → 1 → 2 → 1 → 2 → 1 → 3 mph | Same, nearer standstill |
+| S01 | Stop with the target fading −0.45 → −0.2 m/s² as speed falls | Routes 22/23/41, lead creeping: output crossed zero, brake 0 for a frame, +0.5 m/s² creep lurch and re-grab |
+| S02 | Stop with the target fading −0.37 → −0.1 m/s² | Route 40 pre-stop dip; route 41 crawl at 0.3 m/s against a small negative target |
+| S03 | S01, then the stop flag drops for 0.4 / 1.0 / 0.3 s starting 0.3 s after standstill (+0.05 m/s² target) | Route 40 no-lead stop: four escapes of +0.8…+2.0 m/s² |
+| S04 | S01, hold 2 s, creep to 1.5 mph for 5 s, stop; twice, then a final stop | Routes 66/69 restart: 1.1–1.4 s delay, then +1.1…+1.3 m/s² for a +0.15 request |
+
+S01–S03 never assert stop intent early: as on the road, it comes only from
+`should_stop()` below 0.3 m/s. The original pulse tests start one second after
+standstill at 150 counts, where retained pressure hides the S03 failure. S04 leaves
+its intermediate holds without a throttle tap; only its final stop waits for one.
+S03 and S04 exercise stop/launch sequencing that the allocator change does not
+address; treat their first results as the baseline for that later work.
+
+Afterwards run `replay_gm_allocator.py <rlogs> --transitions`: it must reproduce the
+sent commands exactly and lists every torque/brake ownership and CAN mode change.
+
+## Previous: signed EBCM acceleration requests
 
 `SIGNED_BRAKE_MANEUVERS` runs six profiles twice each (12 attempts), all in
 **0xA**. The sign below is the actual CAN sign: negative requests deceleration,
@@ -33,7 +64,7 @@ finishes after four seconds. +200 uses the same timing and guards as every other
 Gas/regen stays at −650 Nm throughout direct measurement. Existing direct-test
 guards remain: 0.4–2.0 m/s, no standstill, valid CAN and commands no older than
 250 ms. Endpoint stopping and the throttle-tap acknowledgement are unchanged.
-Accelerator interruption restarts acquisition. Only this suite runs; the previous
+Accelerator interruption restarts acquisition. The earlier
 ±15/18/20 profiles are preserved as `FIXED_SIGNED_BRAKE_MANEUVERS`.
 
 Enable `LongitudinalManeuverMode` as before and start a new drive. The signed
@@ -75,13 +106,9 @@ The preserved `CREEP_SPEED_MANEUVERS` suite is **six speed profiles, two runs ea
 These exercise normal longitudinal control, including its acceleration PI and
 brake/torque transitions. They use no direct brake-count or mode override.
 
-For the Volt gateway with `STOCK_CREEP_TRANSITIONS` enabled, moving braking now
-uses **0xA**. **0xB** requires the controller's explicit stopping state as well as
-low speed. Brake exit uses **zero demand in 0x1**, the existing separate entry
-and release thresholds, and the existing AxleTorqueMin torque initialization.
-The transition thresholds, production PI gains and brake-demand scaling are
-unchanged. Other platforms and the disabled-feature baseline retain their mode
-selection.
+For the Volt gateway, moving braking uses **0xA** whatever the sign of the request.
+**0xB** requires the controller's explicit stopping state as well as low speed.
+Other platforms keep their speed-based mode selection.
 
 Every attempt first settles at **3 mph for two seconds**, then follows a timed
 speed reference. Ramps use **0.10 m/s²** in either direction. The test's acceleration

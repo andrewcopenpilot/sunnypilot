@@ -136,6 +136,11 @@ class StopManeuver(Maneuver):
   pulse_period: float = 1.5     # s between pulse starts
   pulse_accel: float = 0.05     # m/s^2 target during a pulse
   pulse_start: float = 1.0      # s of standstill before the first pulse
+  # Explicit (start, duration) pulses in seconds since first standstill; replaces the uniform train.
+  pulse_times: tuple[tuple[float, float], ...] = ()
+  # Speed-scheduled approach, like the MPC's fading aTarget behind a slowing lead. Empty: constant stop_accel.
+  approach_speed_bp: tuple[float, ...] = ()  # m/s
+  approach_accel_v: tuple[float, ...] = ()   # m/s^2
   _elapsed_frames: int = 0
   _hold_frames: int = 0
   _holding_frames: int = 0
@@ -154,15 +159,16 @@ class StopManeuver(Maneuver):
 
   def _pulse_state(self, t):
     """(in a pulse now, all pulses finished) for t seconds since standstill was first reached."""
-    if self.creep_pulses <= 0:
-      return False, True
-    in_pulse = any(s <= t < s + self.pulse_off_time
-                   for s in (self.pulse_start + k * self.pulse_period for k in range(self.creep_pulses)))
-    done = t >= self.pulse_start + (self.creep_pulses - 1) * self.pulse_period + self.pulse_off_time
-    return in_pulse, done
+    pulses = self.pulse_times or tuple((self.pulse_start + k * self.pulse_period, self.pulse_off_time)
+                                        for k in range(self.creep_pulses))
+    return any(s <= t < s + d for s, d in pulses), all(t >= s + d for s, d in pulses)
 
-  def reset(self):
-    super().reset()
+  def _approach_accel(self, v_ego):
+    if not self.approach_speed_bp:
+      return self.stop_accel
+    return float(np.interp(v_ego, self.approach_speed_bp, self.approach_accel_v))
+
+  def _clear_stop(self):
     self._elapsed_frames = 0
     self._hold_frames = 0
     self._holding_frames = 0
@@ -170,6 +176,10 @@ class StopManeuver(Maneuver):
     self._pulse_active = False
     self._failed = False
     self._complete = False
+
+  def reset(self):
+    super().reset()
+    self._clear_stop()
 
   def get_accel(self, v_ego: float, long_active: bool, standstill: bool, cruise_standstill: bool, gas_pressed: bool = False, /) -> float:
     self._run_completed = False
@@ -210,7 +220,40 @@ class StopManeuver(Maneuver):
       self._hold_frames = 0
     elif self._elapsed_frames * DT_MDL >= self.timeout:
       self._failed = True
-    return self.stop_accel
+      return self.stop_accel
+    return self._approach_accel(v_ego)
+
+
+@dataclass
+class QueueCreepManeuver(StopManeuver):
+  """Stop behind a queue, creep forward when it moves, stop again. Each stop is the parent's."""
+  creeps: int = 2
+  creep_speed: float = 1.5 * CV.MPH_TO_MS
+  creep_time: float = 5.
+  _creeps_done: int = 0
+  _creep_frames: int = 0
+  _creeping: bool = False
+
+  def get_accel(self, v_ego: float, long_active: bool, standstill: bool, cruise_standstill: bool, gas_pressed: bool = False, /) -> float:
+    if long_active and not gas_pressed and self._complete and self._creeps_done < self.creeps:
+      # The queue moves: leave the completed hold without waiting for driver acknowledgement.
+      self._clear_stop()
+      self._creeps_done += 1
+      self._creep_frames = 0
+      self._creeping = True
+    if self._creeping and long_active:
+      self._run_completed = False
+      self._creep_frames += 1
+      self._creeping = self._creep_frames * DT_MDL < self.creep_time
+      # Same bounded speed tracking as the creep-speed profiles; the production PI is unchanged.
+      return float(np.clip(0.5 * (self.creep_speed - v_ego), -0.3, 0.3))
+    return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
+
+  def reset(self):
+    super().reset()
+    self._creeps_done = 0
+    self._creep_frames = 0
+    self._creeping = False
 
 
 @dataclass
@@ -689,6 +732,29 @@ MOVING_CREEP_MANEUVERS = [
   ], repeat=1, initial_speed=3. * CV.MPH_TO_MS),
 ]
 STANDARD_MANEUVERS = LOW_SPEED_MANEUVERS + MOVING_CREEP_MANEUVERS
+# Stops that failed on the road with the zero-clamped brake request (volt-regen-hunt HANDOFF.md).
+# Targets follow the logged planner, so stop intent comes from should_stop() below 0.3 m/s.
+TRAFFIC_FADE = dict(approach_speed_bp=(0.3, RECOVERY_SPEED), approach_accel_v=(-0.2, -0.45))
+REAL_WORLD_STOP_MANEUVERS = [
+  # Routes 22/23/41, lead creeping: aTarget fades about -0.45 -> -0.2 below 1 m/s. Over-braking wound
+  # I positive, the output crossed zero, brake 0 for a frame -> +250 Nm creep -> +0.5 m/s^2 lurch and re-grab.
+  StopManeuver("real stop: S01, traffic stop, target fading -0.45 to -0.2", [], repeat=1,
+               initial_speed=RECOVERY_SPEED, stop_accel=-0.3, **TRAFFIC_FADE),
+  # Route 40 pre-stop dip: target -0.37 -> -0.1; a 0.3 m/s crawl against a small negative target (route 41).
+  StopManeuver("real stop: S02, gentle stop, target fading -0.37 to -0.1", [], repeat=1, timeout=30.,
+               initial_speed=RECOVERY_SPEED, stop_accel=-0.3,
+               approach_speed_bp=(0.3, RECOVERY_SPEED), approach_accel_v=(-0.1, -0.37)),
+  # Route 40 no-lead stop: shouldStop dropped for 0.4/1.0/0.3 s within 0.3 s of standstill, before the
+  # brake exceeded 40 counts; four escapes of +0.8..+2.0 m/s^2. The original pulse tests start after 1 s
+  # at 150 counts, where retained pressure hides the failure.
+  StopManeuver("real stop: S03, stop flag flaps 0.4/1.0/0.3s from 0.3s after standstill", [], repeat=1, timeout=30.,
+               initial_speed=RECOVERY_SPEED, stop_accel=-0.3, pulse_accel=0.05,
+               pulse_times=((0.3, 0.4), (1.1, 1.0), (2.5, 0.3)), **TRAFFIC_FADE),
+  # Routes 66/69 feather restart: 1.1-1.4 s launch delay, then +1.1..+1.3 m/s^2 for a +0.15 request,
+  # followed by brake on/off toggling while coasting below creep speed.
+  QueueCreepManeuver("real stop: S04, queue: stop, 2 x creep to 1.5 mph for 5s, stop", [], repeat=1, timeout=30.,
+                     initial_speed=RECOVERY_SPEED, stop_accel=-0.3, hold_time=2., **TRAFFIC_FADE),
+]
 BRAKE_SWEEP_MANEUVERS = [
   BrakeCharacterizationManeuver("brake characterization: mode 0xA, 5 to 20 counts at 0.25 count/s", [],
                                repeat=2, initial_speed=3. * CV.MPH_TO_MS, start_counts=5.),
@@ -700,7 +766,9 @@ BRAKE_CHARACTERIZATION_MANEUVERS = brake_exit_maneuvers()
 CREEP_SPEED_MANEUVERS = creep_speed_maneuvers()
 FIXED_SIGNED_BRAKE_MANEUVERS = fixed_signed_brake_maneuvers()
 SIGNED_BRAKE_MANEUVERS = signed_brake_maneuvers()
-MANEUVERS = SIGNED_BRAKE_MANEUVERS
+# Step 1 (signed closed-loop brake request): 1.5<->2 and 1<->2 mph cycles, then the real-world stops.
+SIGNED_CLOSED_LOOP_MANEUVERS = CREEP_SPEED_MANEUVERS[3:5] + REAL_WORLD_STOP_MANEUVERS
+MANEUVERS = SIGNED_CLOSED_LOOP_MANEUVERS
 
 
 def main():

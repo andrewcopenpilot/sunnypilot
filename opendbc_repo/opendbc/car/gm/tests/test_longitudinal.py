@@ -22,157 +22,66 @@ def make_state(speed=0.5, minimum=100., valid=True, standstill=False, cruise_sta
                          loopback_lka_steering_cmd_ts_nanos=0)
 
 
-class TestVoltCreepTransitions(unittest.TestCase):
+class TestStockGasBrake(unittest.TestCase):
   def setUp(self):
     self.controller = make_controller()
     self.state = make_state()
 
-  def enter_braking(self):
-    self.controller.stock_gas_brake(-0.3, self.state, False)
-    self.assertTrue(self.controller.brake_mode)
+  def hold(self, accel, frames=10, stopping=False):
+    for _ in range(frames):
+      result = self.controller.stock_gas_brake(accel, self.state, stopping)
+    return result
 
-  def test_entry_and_retention_are_distinct(self):
-    # A small positive request must not enter braking from torque mode.
-    self.controller.stock_gas_brake(0.1, self.state, False)
+  def test_signed_request_between_entry_and_release(self):
+    # A small positive request does not enter braking from torque mode.
+    self.hold(0.1)
     self.assertFalse(self.controller.brake_mode)
-    self.enter_braking()
-    # Reducing brake demand must not relinquish the path, even when it reaches zero.
-    for accel in (-0.1, 0., 0.02):
-      for _ in range(10):
-        gas, brake = self.controller.stock_gas_brake(accel, self.state, False)
+    # Once braking, the request follows the corrected acceleration through zero.
+    for accel, expected in ((-0.3, 30), (-0.1, 10), (0., 0), (0.02, -2), (0.15, -15), (-0.05, 5)):
+      self.assertEqual(self.hold(accel), (-650., expected))
       self.assertTrue(self.controller.brake_mode)
-      self.assertEqual(gas, -650.)
-      self.assertEqual(brake, 8 if accel < 0. else 0)
 
-  def test_small_positive_release_preserves_hysteresis(self):
-    # Earlier release is limited to moving creep and does not immediately re-enter
-    # braking when corrected demand fluctuates around the new release boundary.
-    for speed in (0.4, 0.8, 1.0):
+  def test_release_and_reentry_hysteresis(self):
+    for speed in (0.4, 1.0, 4., 15.):
       with self.subTest(speed=speed):
         self.controller = make_controller()
-        self.state = make_state(speed=speed)
-        self.enter_braking()
-        self.controller.stock_gas_brake(0.02, self.state, False)
+        self.state = make_state(speed=speed, minimum=100. if speed < 2. else -650.)
+        floor = self.controller.params.regen_accel_available(self.state.axle_torque_min, speed)
+        self.hold(floor - 0.5)
         self.assertTrue(self.controller.brake_mode)
-        self.controller.stock_gas_brake(0.06, self.state, False)
+        self.hold(floor + 0.05)
+        self.assertTrue(self.controller.brake_mode)
+        gas, brake = self.hold(floor + 0.3, frames=1)
         self.assertFalse(self.controller.brake_mode)
-        for accel in (0.04, 0.02, 0., -0.05, 0.04):
-          self.controller.stock_gas_brake(accel, self.state, False)
+        self.assertEqual(brake, 0)
+        self.assertGreater(gas, -650.)  # existing torque slew out of the brake-mode request
+        # No chatter: falling back inside the band does not re-enter braking.
+        for accel in (floor + 0.1, floor, floor - 0.05):
+          self.hold(accel, frames=1)
           self.assertFalse(self.controller.brake_mode)
-        self.enter_braking()
 
-  def test_torque_handoff_initializes_once(self):
-    self.enter_braking()
-    gas, brake = self.controller.stock_gas_brake(0.4, self.state, False)
-    self.assertFalse(self.controller.brake_mode)
-    self.assertEqual((gas, brake), (100., 0))
-    gas_next, _ = self.controller.stock_gas_brake(0.4, self.state, False)
-    self.assertGreater(gas_next, gas)
-    self.assertLessEqual(gas_next - gas, 40.)
+  def test_stopping_and_standstill_stay_unsigned(self):
+    for state, stopping in ((self.state, True), (make_state(standstill=True), False), (make_state(cruise_standstill=True), False)):
+      self.controller = make_controller()
+      self.state = make_state()
+      self.hold(-0.3)
+      self.assertEqual(self.hold(0.15)[1], -15)
+      # One slew step covers the positive band, so the first such request is already non-positive.
+      _, brake = self.controller.stock_gas_brake(0.1, state, stopping)
+      self.assertGreaterEqual(brake, 0)
 
-  def test_invalid_minimum_uses_existing_slew(self):
-    for minimum in (65536., float("nan")):
-      with self.subTest(minimum=minimum):
-        self.controller = make_controller()
-        self.state = make_state()
-        self.enter_braking()
-        self.state.axle_torque_min = minimum
-        self.state.axle_torque_min_valid = False
-        gas, brake = self.controller.stock_gas_brake(0.4, self.state, False)
-        self.assertFalse(self.controller.brake_mode)
-        self.assertGreater(gas, -650.)
-        self.assertLess(gas, 0.)
-        self.assertEqual(brake, 0)
-
-  def test_handoff_preserves_torque_limits(self):
-    for minimum, expected in ((-10000., -650.), (10000., 1018.)):
-      with self.subTest(minimum=minimum):
-        self.controller = make_controller()
-        self.state = make_state(minimum=minimum)
-        self.controller.brake_mode = True
-        self.controller.gas_cmd = -650.
-        gas, _ = self.controller.stock_gas_brake(1., self.state, False)
-        self.assertEqual(gas, expected)
-
-  def test_excluded_states_keep_legacy_release(self):
-    cases = [
-      (make_controller(), make_state(speed=1.5)),
-      (make_controller(), make_state(speed=4.)),
-      (make_controller(), make_state(speed=-0.5)),
-      (make_controller(), make_state(speed=0.)),
-      (make_controller(), make_state(standstill=True)),
-      (make_controller(), make_state(cruise_standstill=True)),
-      (make_controller(network="fwdCamera"), make_state()),
-      (make_controller(CAR.CHEVROLET_MALIBU), make_state()),
-    ]
-    for controller, state in cases:
-      with self.subTest(car=controller.CP.carFingerprint, state=state, network=controller.CP.networkLocation):
-        controller.brake_mode = True
-        controller.gas_cmd = -650.
-        gas, brake = controller.stock_gas_brake(0.1, state, False)
-        self.assertFalse(controller.stock_creep_active)
-        self.assertFalse(controller.brake_mode)
-        self.assertLess(gas, 0.)  # legacy slew, not a positive minimum-torque seed
-        self.assertEqual(brake, 0)
-
-  def test_creep_brake_scale_blends_out_with_speed(self):
-    for speed, expected in ((0.4, 24), (0.8, 24), (1.0, 24), (1.25, 27), (1.5, 30), (4., 30)):
-      with self.subTest(speed=speed):
-        controller = make_controller()
-        state = make_state(speed=speed)
-        for _ in range(10):
-          gas, brake = controller.stock_gas_brake(-0.3, state, False)
-        self.assertEqual((gas, brake), (-650., expected))
-        self.assertTrue(controller.brake_mode)
-
-  def test_excluded_states_keep_unscaled_brake_demand(self):
-    disabled = make_controller()
-    disabled.params.STOCK_CREEP_TRANSITIONS = False
-    unscaled = make_controller()
-    unscaled.params.CREEP_BRAKE_SCALE = 1.
-    cases = [
-      (make_controller(), make_state(speed=0.)),
-      (make_controller(), make_state(speed=-0.5)),
-      (make_controller(), make_state(standstill=True)),
-      (make_controller(), make_state(cruise_standstill=True)),
-      (make_controller(network="fwdCamera"), make_state()),
-      (make_controller(CAR.CHEVROLET_MALIBU), make_state()),
-      (disabled, make_state()),
-      (unscaled, make_state()),
-    ]
-    for controller, state in cases:
-      with self.subTest(car=controller.CP.carFingerprint, state=state):
-        for _ in range(10):
-          _, brake = controller.stock_gas_brake(-0.3, state, False)
-        self.assertEqual(brake, 30)
-
-  def test_scaled_braking_preserves_slew_and_maximum_authority(self):
+  def test_slew_and_maximum_authority(self):
     previous = 0.
-    for _ in range(20):
-      _, brake = self.controller.stock_gas_brake(-4., self.state, False)
-      self.assertLessEqual(abs(self.controller.brake_accel_cmd - previous), 0.2 + 1e-9)
-      previous = self.controller.brake_accel_cmd
-    self.assertEqual(brake, 150)  # Existing creep deceleration cap remains reachable.
-    for _ in range(20):
-      self.controller.stock_gas_brake(0.02, self.state, False)
-      self.assertLessEqual(abs(self.controller.brake_accel_cmd - previous), 0.2 + 1e-9)
-      previous = self.controller.brake_accel_cmd
-    self.assertEqual(self.controller.brake_accel_cmd, 0.)
-    self.assertTrue(self.controller.brake_mode)
+    for accel, expected in ((-4., 150), (0.1, -10)):  # cal 0x5f6 low-speed deceleration floor
+      for _ in range(20):
+        _, brake = self.controller.stock_gas_brake(accel, self.state, False)
+        self.assertLessEqual(abs(self.controller.brake_accel_cmd - previous), 0.2 + 1e-9)
+        previous = self.controller.brake_accel_cmd
+      self.assertEqual(brake, expected)
 
   def test_stopping_keeps_existing_hold_demand(self):
-    for _ in range(20):
-      gas, brake = self.controller.stock_gas_brake(-2., self.state, True)
-    self.assertFalse(self.controller.stock_creep_active)
+    self.assertEqual(self.hold(-2., frames=20, stopping=True), (-650., 150))
     self.assertTrue(self.controller.brake_mode)
-    self.assertEqual((gas, brake), (-650., 150))
-
-  def test_baseline_switch(self):
-    self.controller.params.STOCK_CREEP_TRANSITIONS = False
-    self.enter_braking()
-    self.controller.stock_gas_brake(-0.09, self.state, False)
-    self.assertFalse(self.controller.brake_mode)
-    self.assertFalse(self.controller.stock_creep_active)
 
 
 class TestVoltCreepCAN(unittest.TestCase):
@@ -201,56 +110,40 @@ class TestVoltCreepCAN(unittest.TestCase):
     self.assertEqual(int.from_bytes(data[2:4], "big"), (0x10000 - (mode << 12) - raw_brake - idx) & 0xffff)
     return mode, demand
 
-  def test_scaled_demand_is_sent_on_can(self):
-    for _ in range(10):
-      mode, demand = self.update(-0.3)
-    self.assertEqual((mode, demand), (0xa, -24.))
+  def test_signed_demand_holds_0xa_until_release(self):
+    for accel, expected in ((-0.3, -30.), (0., 0.), (0.02, 2.), (0.15, 15.), (-0.05, -5.)):
+      for _ in range(10):
+        mode, demand = self.update(accel)
+        self.assertEqual(mode, 0xa)
+      self.assertEqual(demand, expected)
     self.assertEqual(self.controller.apply_gas, -650.)
+    self.assertEqual(self.update(0.3), (0x1, 0.))
+    for accel in (0.1, 0., -0.05, 0.1):
+      self.assertEqual(self.update(accel), (0x1, 0.))
 
-  def test_zero_demand_retains_active_path_until_torque_handoff(self):
-    self.assertEqual(self.update(-0.3)[0], 0xa)
-    for _ in range(10):
-      mode, demand = self.update(0.02)
-    self.assertEqual((mode, demand), (0xa, 0.))
-    self.assertEqual(self.update(0.06), (0x1, 0.))
-    self.assertEqual(self.controller.apply_gas, 100.)
-
-  def test_stop_intent_can_clear_below_near_stop_speed(self):
+  def test_stop_intent_drops_positive_request_and_can_clear(self):
+    self.update(-0.3)
+    for _ in range(5):
+      self.assertEqual(self.update(0.15)[0], 0xa)
     self.control.actuators.longControlState = "stopping"
-    self.assertEqual(self.update(-0.3)[0], 0xb)
+    self.assertEqual(self.update(-0.3), (0xb, -5.))  # one slew step from +0.15
     self.control.actuators.longControlState = "pid"
     # Resume ordinary braking without requiring speed to rise above 1.5 m/s.
     self.assertEqual(self.update(-0.3)[0], 0xa)
-    self.assertEqual(self.update(0.06), (0x1, 0.))
-    self.assertEqual(self.controller.apply_gas, 100.)
 
-  def test_repeated_creep_release_and_reentry_has_no_mode_chatter(self):
-    for speed in (0.2, 0.5, 1.):
-      self.state.out.vEgo = speed
-      for _ in range(3):
-        for _ in range(20):
-          self.assertEqual(self.update(-0.3)[0], 0xa)
-        for _ in range(20):
-          self.assertEqual(self.update(0.02)[0], 0xa)
-        self.assertEqual(self.update(0.06), (0x1, 0.))
-        for accel in (0.04, 0.02, 0., -0.05, 0.04):
-          self.assertEqual(self.update(accel), (0x1, 0.))
-
-  def test_other_platforms_and_baseline_keep_speed_based_near_stop(self):
-    for controller in (make_controller(CAR.CHEVROLET_MALIBU), make_controller()):
-      if controller.CP.carFingerprint == CAR.CHEVROLET_VOLT and controller.CP.networkLocation == structs.CarParams.NetworkLocation.gateway:
-        controller.params.STOCK_CREEP_TRANSITIONS = False
-      self.controller = controller
-      self.assertEqual(self.update(-0.3)[0], 0xb)
+  def test_other_platforms_keep_speed_based_near_stop(self):
+    self.controller = make_controller(CAR.CHEVROLET_MALIBU)
+    self.assertEqual(self.update(-0.3)[0], 0xb)
 
   def test_disengagement_clears_retained_path(self):
     self.update(-0.3)
-    self.update(0.02)
+    for _ in range(3):
+      mode, demand = self.update(0.1)
+    self.assertEqual((mode, demand), (0xa, 10.))
     # CC.enabled can remain true for lateral control while longitudinal is inactive.
     self.control.longActive = False
     self.assertEqual(self.update(0.), (0x1, 0.))
     self.assertFalse(self.controller.brake_mode)
-    self.assertFalse(self.controller.stock_creep_active)
 
   def test_stopping_still_sends_full_stop_mode(self):
     self.control.actuators.longControlState = "stopping"

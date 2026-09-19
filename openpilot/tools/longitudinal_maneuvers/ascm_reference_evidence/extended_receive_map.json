@@ -1,0 +1,356 @@
+{
+  "id_mask": "0x03ffff00",
+  "entries": [
+    {
+      "list_index": 153,
+      "message_index": 148,
+      "filter_key": "0xec8000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a20",
+      "callback": "0x720a0"
+    },
+    {
+      "list_index": 154,
+      "message_index": 149,
+      "filter_key": "0xec4000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a18",
+      "callback": "0x720c0"
+    },
+    {
+      "list_index": 155,
+      "message_index": 150,
+      "filter_key": "0xae8000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a38",
+      "callback": "0x720e0"
+    },
+    {
+      "list_index": 156,
+      "message_index": 151,
+      "filter_key": "0xae6000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a40",
+      "callback": "0x72100"
+    },
+    {
+      "list_index": 157,
+      "message_index": 152,
+      "filter_key": "0xae4000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a48",
+      "callback": "0x72120"
+    },
+    {
+      "list_index": 158,
+      "message_index": 153,
+      "filter_key": "0xad8000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x400049f0",
+      "callback": "0x72140"
+    },
+    {
+      "list_index": 159,
+      "message_index": 154,
+      "filter_key": "0xad6000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a70",
+      "callback": "0x72160"
+    },
+    {
+      "list_index": 160,
+      "message_index": 155,
+      "filter_key": "0xad4000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x400049e8",
+      "callback": "0x72180"
+    },
+    {
+      "list_index": 161,
+      "message_index": 156,
+      "filter_key": "0x8e0000",
+      "extended_flag": "0x20",
+      "dlc": 3,
+      "buffer": "0x40004a64",
+      "callback": "0x0"
+    },
+    {
+      "list_index": 162,
+      "message_index": 157,
+      "filter_key": "0x84a000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x400049f8",
+      "callback": "0x721a0"
+    },
+    {
+      "list_index": 163,
+      "message_index": 158,
+      "filter_key": "0x788000",
+      "extended_flag": "0x20",
+      "dlc": 3,
+      "buffer": "0x40004a80",
+      "callback": "0x721c0"
+    },
+    {
+      "list_index": 164,
+      "message_index": 159,
+      "filter_key": "0x760000",
+      "extended_flag": "0x20",
+      "dlc": 2,
+      "buffer": "0x40004a98",
+      "callback": "0x721e0"
+    },
+    {
+      "list_index": 165,
+      "message_index": 160,
+      "filter_key": "0x754000",
+      "extended_flag": "0x20",
+      "dlc": 2,
+      "buffer": "0x40004a5c",
+      "callback": "0x0"
+    },
+    {
+      "list_index": 166,
+      "message_index": 161,
+      "filter_key": "0x732000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x400049b8",
+      "callback": "0x72200"
+    },
+    {
+      "list_index": 167,
+      "message_index": 162,
+      "filter_key": "0x72c000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a28",
+      "callback": "0x72220"
+    },
+    {
+      "list_index": 168,
+      "message_index": 164,
+      "filter_key": "0x6c0000",
+      "extended_flag": "0x20",
+      "dlc": 5,
+      "buffer": "0x400049e0",
+      "callback": "0x72260"
+    },
+    {
+      "list_index": 169,
+      "message_index": 166,
+      "filter_key": "0x60c000",
+      "extended_flag": "0x20",
+      "dlc": 5,
+      "buffer": "0x400049bc",
+      "callback": "0x722a0"
+    },
+    {
+      "list_index": 170,
+      "message_index": 168,
+      "filter_key": "0x424000",
+      "extended_flag": "0x20",
+      "dlc": 3,
+      "buffer": "0x40004a30",
+      "callback": "0x722e0"
+    },
+    {
+      "list_index": 171,
+      "message_index": 169,
+      "filter_key": "0x412000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a9c",
+      "callback": "0x72300"
+    },
+    {
+      "list_index": 172,
+      "message_index": 170,
+      "filter_key": "0x40a000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a78",
+      "callback": "0x72320"
+    },
+    {
+      "list_index": 173,
+      "message_index": 171,
+      "filter_key": "0x3a4000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a58",
+      "callback": "0x72340"
+    },
+    {
+      "list_index": 174,
+      "message_index": 172,
+      "filter_key": "0x386000",
+      "extended_flag": "0x20",
+      "dlc": 2,
+      "buffer": "0x400049c4",
+      "callback": "0x72360"
+    },
+    {
+      "list_index": 175,
+      "message_index": 173,
+      "filter_key": "0x384000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a2c",
+      "callback": "0x72380"
+    },
+    {
+      "list_index": 176,
+      "message_index": 174,
+      "filter_key": "0x366000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a7c",
+      "callback": "0x723a0"
+    },
+    {
+      "list_index": 177,
+      "message_index": 175,
+      "filter_key": "0x336000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a60",
+      "callback": "0x723c0"
+    },
+    {
+      "list_index": 178,
+      "message_index": 176,
+      "filter_key": "0x324000",
+      "extended_flag": "0x20",
+      "dlc": 4,
+      "buffer": "0x40004a08",
+      "callback": "0x723e0"
+    },
+    {
+      "list_index": 179,
+      "message_index": 177,
+      "filter_key": "0x320000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a00",
+      "callback": "0x72400"
+    },
+    {
+      "list_index": 180,
+      "message_index": 178,
+      "filter_key": "0x2ac000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a88",
+      "callback": "0x72420"
+    },
+    {
+      "list_index": 181,
+      "message_index": 179,
+      "filter_key": "0x2aa000",
+      "extended_flag": "0x20",
+      "dlc": 8,
+      "buffer": "0x40004a90",
+      "callback": "0x72440"
+    },
+    {
+      "list_index": 182,
+      "message_index": 180,
+      "filter_key": "0x2a8000",
+      "extended_flag": "0x20",
+      "dlc": 6,
+      "buffer": "0x40004a0c",
+      "callback": "0x72460"
+    },
+    {
+      "list_index": 183,
+      "message_index": 181,
+      "filter_key": "0x264000",
+      "extended_flag": "0x20",
+      "dlc": 2,
+      "buffer": "0x40004a84",
+      "callback": "0x72480"
+    },
+    {
+      "list_index": 184,
+      "message_index": 182,
+      "filter_key": "0x258000",
+      "extended_flag": "0x20",
+      "dlc": 5,
+      "buffer": "0x40004aa8",
+      "callback": "0x724a0"
+    },
+    {
+      "list_index": 185,
+      "message_index": 183,
+      "filter_key": "0x248000",
+      "extended_flag": "0x20",
+      "dlc": 3,
+      "buffer": "0x400049d8",
+      "callback": "0x724c0"
+    },
+    {
+      "list_index": 186,
+      "message_index": 184,
+      "filter_key": "0x240000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a68",
+      "callback": "0x724e0"
+    },
+    {
+      "list_index": 187,
+      "message_index": 185,
+      "filter_key": "0x210000",
+      "extended_flag": "0x20",
+      "dlc": 7,
+      "buffer": "0x400049c8",
+      "callback": "0x72500"
+    },
+    {
+      "list_index": 188,
+      "message_index": 186,
+      "filter_key": "0x20c000",
+      "extended_flag": "0x20",
+      "dlc": 5,
+      "buffer": "0x400049d0",
+      "callback": "0x72520"
+    },
+    {
+      "list_index": 189,
+      "message_index": 163,
+      "filter_key": "0x714000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a50",
+      "callback": "0x72240"
+    },
+    {
+      "list_index": 190,
+      "message_index": 165,
+      "filter_key": "0x630000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x400049dc",
+      "callback": "0x72280"
+    },
+    {
+      "list_index": 191,
+      "message_index": 167,
+      "filter_key": "0x608000",
+      "extended_flag": "0x20",
+      "dlc": 1,
+      "buffer": "0x40004a54",
+      "callback": "0x722c0"
+    }
+  ]
+}

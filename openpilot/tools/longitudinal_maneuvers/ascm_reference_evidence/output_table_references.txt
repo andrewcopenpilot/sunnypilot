@@ -1,0 +1,9 @@
+functions: 7982 instructions: 312919
+== range 14d400-14d700
+  ref 0014d6c0 <- 000b3656  lwzx r3,r8,r0  fn=FUN_000b3620  type=DATA
+  ref 0014d6c0 <- 000b3652  e_add16i r8,r8,-0x2940  fn=FUN_000b3620  type=PARAM
+  ref 0014d6c0 <- 000b36e8  lwzx r0,r8,r0  fn=FUN_000b36a0  type=DATA
+  ref 0014d6c0 <- 000b36e4  e_add16i r8,r8,-0x2940  fn=FUN_000b36a0  type=PARAM
+  ref 0014d6c0 <- 000b377c  lwzx r0,r30,r0  fn=FUN_000b3710  type=DATA
+  ref 0014d6c4 <- 000b3754  se_lhz r0,0x4(r4)  fn=FUN_000b3710  type=DATA
+decompiled 3 functions

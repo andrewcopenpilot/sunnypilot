@@ -134,16 +134,19 @@ selected, and must not be interpreted as a fixed 0xB dwell time.
   `00076e20` extracts its top three bits. This matches DBC `CruiseState : 15|3@0`,
   where value 4 is Standstill. Assembly checked because the decompiler's inferred
   RAM types obscure the byte copy.
-- `4001dcc0` bits 27/28: actual selector reads verified in assembly, but their
-  producers and physical meanings remain unresolved. A scan of 160 recovered
-  ACC-region functions and direct references did not identify writes. This is
-  not evidence that those conditions are unreachable.
+- **Follow-up resolved:** `4001dcc0` is the first object record's +0x10 flag
+  word. Startup data initializes pointer `4001d7e0` to `4001dcb0`; `130cc0`
+  writes through this pointer using record stride 0x44. Bit28 is incoming first
+  object byte +0x3c == 1. Bit27 is that byte == 2, or the previous `dc7a`
+  latch with current bit28; `dc7a` then records the new bit27. These are object-derived qualifiers; physical enum names remain unproven.
+  See [the firmware audit](ASCM_FIRMWARE_AUDIT.md) for the publisher chain.
 - The separate suppression condition is `4001da04.bit26 AND 4001d93f == 1`.
   `4001d93f` traces through `000c5e50`/`000c5e40` and `0009ce80` to an IPC-derived
   status. Its physical meaning is unresolved.
 - The hold flag is `4001df9c` (controller-state offset `0xE8`), updated in
-  `0013a180`. `4001d8e2` selects hold variant 4 versus 5; their complete physical
-  distinction has not been established.
+  `0013a180`. `4001d8e2` selects hold variant 4 versus 5. `133960` sets it only
+  below 3 km/h with specific enums from `132fb0` and calibration `0x5de=1`.
+  The exact predicate is now translated; their EBCM behavior remains unestablished.
 
 ## Implications for the current test and control design
 
@@ -186,3 +189,9 @@ reference scans in `/tmp/ascm_mode_b_refs/`. Regenerate targeted exports with
 `ghidra_scripts/DecompileLong.java` and the addresses cited above. Original output
 packing exports are under `decoded/ghidra_longitudinal/mpu1/` and `mpu2/`.
 These are static firmware findings, not an observed OEM drive trace.
+
+The [source follow-up](ASCM_DYNAMICS_AND_OUTPUTS.md) now corroborates one input
+to the variant-4 gate as driver-door-open (extended ID 0x10630000, byte0 bit0).
+The two other fields are mapped to masked extended receive keys 0x00608000 and
+0x00336000, but remain physically unnamed. This does not establish the EBCM's
+physical distinction between hold submodes 4 and 5.

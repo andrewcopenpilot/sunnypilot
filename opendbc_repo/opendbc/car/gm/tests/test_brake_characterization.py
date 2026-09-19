@@ -122,7 +122,6 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           mode, demand = self.update(command, fresh=fresh)
         self.assertEqual(mode, 0xa if case == 'fast' else 0xd if case == 'cruise_stop' else 0xb)
         self.assertEqual(demand, -175. if case == 'fast' else -150.)
-        self.assertFalse(self.controller.stock_creep_active)
 
   def test_fault_stays_latched_when_fresh_commands_return(self):
     self.update(2.)
@@ -140,7 +139,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     for _ in range(10):
       _, demand = self.update(2.)
     self.assertFalse(self.controller.brake_test_failed)
-    self.assertEqual(demand, -24.)
+    self.assertEqual(demand, -30.)
 
   def test_pedals_and_disengagement_cancel_direct_output(self):
     for condition in ('gas', 'brake', 'inactive'):
@@ -153,7 +152,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
       self.assertEqual(self.update(20.), (0x1, 0.))
 
   def test_requires_authorized_vehicle_and_mode(self):
-    for controller, expected in ((fixtures.make_controller(), 24.),
+    for controller, expected in ((fixtures.make_controller(), 30.),
                                  (fixtures.make_controller(CAR.CHEVROLET_MALIBU), 30.)):
       self.setUp()
       self.controller = controller
@@ -174,7 +173,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     self.control.brakeTestActive = False
     for _ in range(10):
       mode, demand = self.update(3.)
-    self.assertEqual((mode, demand), (0xa, -24.))
+    self.assertEqual((mode, demand), (0xa, -30.))
 
 
 class TestBrakeTestForwarding(unittest.TestCase):
