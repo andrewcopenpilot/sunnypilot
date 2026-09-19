@@ -19,11 +19,11 @@ brake scaling and brake/torque selection are bypassed during direct commands.
 
 | ID | Signed request sequence | Measurement duration, including -5 baseline |
 |---|---|---:|
-| S01 | -14 (4 s) → 0 (3 s) → +14 (4 s) → 0 (4 s) | 17 s |
-| S02 | -14 (4 s) → 0 (3 s) → +7 (4 s) → 0 (4 s) | 17 s |
-| S03 | -14 (4 s) → 0 (3 s) → +4 (2 s) → +8 (2 s) → +14 (2 s) → 0 (4 s) | 19 s |
+| S01 | -15 (4 s) → 0 (3 s) → +15 (4 s) → 0 (4 s) | 17 s |
+| S02 | -18 (4 s) → 0 (3 s) → +18 (4 s) → 0 (4 s) | 17 s |
+| S03 | -20 (4 s) → 0 (3 s) → +20 (4 s) → 0 (4 s) | 17 s |
 
-Total measured time is 106 seconds, plus setup, stopping, acknowledgement and
+Total measured time is 102 seconds, plus setup, stopping, acknowledgement and
 recovery. Existing direct-test guards remain: 0.4–2.0 m/s, no standstill, valid
 CAN and commands no older than 250 ms. Endpoint stopping and the throttle-tap
 acknowledgement are unchanged. Accelerator interruption restarts the unfinished
@@ -42,9 +42,14 @@ configurations without brake-message transmit permission still cannot send it.
 Panda independently checks message/bus permission, mode, sign, bounds and
 actuation permission.
 Direct-command generation still requires Volt maneuver mode in the host; its
-speed/freshness guards remain active. The characterization limit stays at **+14
-signed counts**, and all test steps are unchanged. Normal driving control is unchanged and
-does not yet generate positive EBCM requests.
+speed/freshness guards remain active. The characterization range is **−20 to +20 signed counts**. Normal driving
+control is unchanged and does not yet generate positive EBCM requests.
+
+The separate chassis interceptor must also have the signed-request update
+(−400 to +200 counts). Its old unsigned check latches a fault on positive
+requests and replaces subsequent brake commands with mode 0x0, zero demand.
+Confirm the request reaches the chassis bus and interceptor status stays healthy
+before interpreting pressure release as a response to positive demand.
 
 Look for pressure before the positive step, partial versus complete pressure
 reduction, resulting acceleration, and whether the final zero request arrests

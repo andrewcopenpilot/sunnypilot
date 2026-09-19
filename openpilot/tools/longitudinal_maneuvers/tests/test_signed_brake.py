@@ -15,9 +15,9 @@ class TestSignedBrakeProfiles(unittest.TestCase):
   def test_exact_sequences_repeats_and_acknowledgement(self):
     self.assertIs(MANEUVERS, SIGNED_BRAKE_MANEUVERS)
     expected = (
-      ((-5., 2.), (-14., 4.), (0., 3.), (14., 4.), (0., 4.)),
-      ((-5., 2.), (-14., 4.), (0., 3.), (7., 4.), (0., 4.)),
-      ((-5., 2.), (-14., 4.), (0., 3.), (4., 2.), (8., 2.), (14., 2.), (0., 4.)),
+      ((-5., 2.), (-15., 4.), (0., 3.), (15., 4.), (0., 4.)),
+      ((-5., 2.), (-18., 4.), (0., 3.), (18., 4.), (0., 4.)),
+      ((-5., 2.), (-20., 4.), (0., 3.), (20., 4.), (0., 4.)),
     )
     self.assertEqual(sum(m.repeat + 1 for m in MANEUVERS), 6)
     for template, steps in zip(MANEUVERS, expected, strict=True):
@@ -46,7 +46,7 @@ class TestSignedBrakeProfiles(unittest.TestCase):
       self.start(m)
       m._test_frames = round(9. / DT_MDL)
       m.get_accel(1., True, False, False)
-      self.assertEqual(-m.brake_counts, 14.)
+      self.assertEqual(-m.brake_counts, 15.)
       m.get_accel(speed, True, standstill, cruise_stop)
       self.assertFalse(m.brake_test_active)
       self.assertTrue(maneuver_should_stop(m, speed, 0.))
@@ -63,6 +63,6 @@ class TestSignedBrakeProfiles(unittest.TestCase):
     self.assertEqual(-m.brake_counts, -5.)
 
   def test_invalid_profiles(self):
-    for steps in ((), ((15., 1.),), ((-21., 1.),), ((float('nan'), 1.),), ((1., 0.),), ((1., 91.),)):
+    for steps in ((), ((21., 1.),), ((-21., 1.),), ((float('nan'), 1.),), ((1., 0.),), ((1., 91.),)):
       with self.assertRaises(AssertionError):
         SignedBrakeManeuver('invalid', [], request_steps=steps)

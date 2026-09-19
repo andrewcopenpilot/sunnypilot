@@ -482,7 +482,7 @@ class BrakeCharacterizationManeuver(Maneuver):
 @dataclass
 class SignedBrakeManeuver(BrakeCharacterizationManeuver):
   """Timed signed EBCM acceleration requests, staying in ordinary mode 0xA."""
-  request_steps: tuple[tuple[float, float], ...] = ((-14., 4.), (0., 3.), (14., 4.), (0., 4.))
+  request_steps: tuple[tuple[float, float], ...] = ((-15., 4.), (0., 3.), (15., 4.), (0., 4.))
 
   def __post_init__(self):
     assert self.request_steps
@@ -513,10 +513,10 @@ class SignedBrakeManeuver(BrakeCharacterizationManeuver):
 
 def signed_brake_maneuvers():
   # Short application holds leave speed available for the positive-request phase.
-  positive_steps = (((14., 4.),), ((7., 4.),), ((4., 2.), (8., 2.), (14., 2.)))
+  levels = (15., 18., 20.)
   maneuvers = []
-  for index, steps in enumerate(positive_steps, 1):
-    requests = ((-5., 2.), (-14., 4.), (0., 3.), *steps, (0., 4.))
+  for index, level in enumerate(levels, 1):
+    requests = ((-5., 2.), (-level, 4.), (0., 3.), (level, 4.), (0., 4.))
     label = ' -> '.join(f'{request:+g} ({seconds:g}s)' for request, seconds in requests)
     maneuvers.append(SignedBrakeManeuver(f'brake characterization: S{index:02d}, signed 0xA: {label}', [],
                                          repeat=1, initial_speed=RECOVERY_SPEED, request_steps=requests))

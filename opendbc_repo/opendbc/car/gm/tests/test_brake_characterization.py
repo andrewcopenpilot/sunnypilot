@@ -26,7 +26,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
       with self.subTest(speed=speed):
         self.setUp()
         self.state.out.vEgo = speed
-        for command in range(21):
+        for command in range(-20, 21):
           self.assertEqual(self.update(command), (0xa, -float(command)))
           self.assertEqual(self.controller.apply_gas, -650.)
         self.assertEqual(self.update(0.), (0xa, 0.))
@@ -44,7 +44,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.assertFalse(self.controller.brake_test_failed)
 
   def test_signed_steps_round_trip_through_controller_dbc_and_checksum(self):
-    for signed in (-14., 0., 14., 0., 7., 4., 8., 14., 0.):
+    for signed in (-15., 0., 15., 0., -18., 0., 18., 0., -20., 0., 20., 0.):
       for _ in range(10):
         self.assertEqual(self.update(-signed), (0xa, signed))
         self.assertEqual(self.controller.apply_gas, -650.)
@@ -107,7 +107,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.control.brakeTestMonoTime = 9_000_000_000
           fresh = False
         elif case in ('nan', 'negative', 'large'):
-          command = {'nan': float('nan'), 'negative': -15., 'large': 21.}[case]
+          command = {'nan': float('nan'), 'negative': -21., 'large': 21.}[case]
         elif case in ('slow', 'fast'):
           self.state.out.vEgo = {'slow': 0.39, 'fast': 2.}[case]
         elif case == 'standstill':
@@ -209,7 +209,7 @@ class TestBrakeTestForwarding(unittest.TestCase):
     cs.canValid = True
     cc = structs.CarControl.new_message(enabled=True, longActive=True)
     plan = SimpleNamespace(brakeTestActive=True, brakeTestCommand=-14., brakeTestRelease=False, shouldStop=False)
-    for command, valid in ((-14., True), (-14.01, False), (20., True), (20.01, False), (float('inf'), False)):
+    for command, valid in ((-20., True), (-20.01, False), (20., True), (20.01, False), (float('inf'), False)):
       plan.brakeTestCommand = command
       self.assertEqual(forward_brake_test(cc, controller.CP, controller.CP_SP, cs, plan,
                                           1_000_000_000, 1_100_000_000, True), valid)
