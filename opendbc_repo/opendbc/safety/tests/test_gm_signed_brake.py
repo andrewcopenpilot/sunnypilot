@@ -31,7 +31,7 @@ class TestGmSignedBrakeSafety(unittest.TestCase):
         self.safety.set_controls_allowed(enabled)
         for mode in range(16):
           for request in range(-2048, 2048):
-            expected = request == 0 or (enabled and -400 <= request < 0) or (enabled and mode == 0xA and 0 < request <= 200)
+            expected = request == 0 or (enabled and -400 <= request <= 200)
             self.assertEqual(self.tx(request, mode, bus), expected, (param, enabled, mode, request))
 
   def test_configurations_without_brake_tx_remain_blocked(self):
@@ -42,13 +42,15 @@ class TestGmSignedBrakeSafety(unittest.TestCase):
       for request in (-400, -14, 0, 1, 14, 199, 200, 201, 2047):
         self.assertFalse(self.tx(request, bus=bus))
 
-  def test_gas_override_blocks_positive_requests(self):
+  def test_gas_override_blocks_nonzero_requests_in_all_modes(self):
     for param, bus in ((0, 1), (GMSafetyFlags.EV, 1), (GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG, 0)):
       self.configure(param)
       self.safety.set_controls_allowed(True)
       self.safety.set_gas_pressed_prev(True)
-      for request in (1, 14, 199, 200):
-        self.assertFalse(self.tx(request, bus=bus))
+      for mode in range(16):
+        for request in (-400, -1, 1, 199, 200):
+          self.assertFalse(self.tx(request, mode=mode, bus=bus))
+        self.assertTrue(self.tx(0, mode=mode, bus=bus))
 
   def test_wrong_bus_remains_blocked(self):
     for param, bus in ((0, 0), (GMSafetyFlags.HW_CAM | GMSafetyFlags.HW_CAM_LONG, 1)):

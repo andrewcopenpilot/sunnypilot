@@ -121,16 +121,11 @@ static bool gm_tx_hook(const CANPacket_t *msg) {
 
   bool tx = true;
 
-  // BRAKE: safety check
+  // Brake controller: signed acceleration request safety check
   if (msg->addr == 0x315U) {
     const int raw = ((msg->data[0] & 0xFU) << 8) + msg->data[1];
     const int request = to_signed(raw, 12);
-    if (request > 0) {
-      // Signed acceleration targets use the shared GM brake-command protocol.
-      // Limit positive requests to 2.0 m/s^2 (0.01 m/s^2 per count).
-      const int mode = msg->data[0] >> 4;
-      tx = get_longitudinal_allowed() && (mode == 0xA) && (request <= 200);
-    } else if (longitudinal_brake_checks(-request, *gm_long_limits)) {
+    if (longitudinal_accel_checks(request, *gm_long_limits)) {
       tx = false;
     }
   }
@@ -184,10 +179,14 @@ static safety_config gm_init(uint16_t param) {
   static const int GM_GAS_TO_CAN = 8;  // 1 / 0.125
 
   static const LongitudinalLimits GM_ASCM_LONG_LIMITS = {
+    // Powertrain torque limits, converted from Nm to CAN counts.
     .max_gas = 1018 * GM_GAS_TO_CAN,
     .min_gas = -650 * GM_GAS_TO_CAN,
     .inactive_gas = -650 * GM_GAS_TO_CAN,
-    .max_brake = 400,
+    // Brake controller acceleration limits, 0.01 m/s^2 per count.
+    .min_accel = -400,  // Maximum requested deceleration.
+    .max_accel = 200,   // Positive requests can reduce braking to allow downhill acceleration.
+    .inactive_accel = 0,
   };
 
   static const CanMsg GM_ASCM_TX_MSGS[] = {{0x180, 0, 4, .check_relay = false}, {0x409, 0, 7, .check_relay = false}, {0x40A, 0, 7, .check_relay = false}, {0x2CB, 0, 8, .check_relay = false}, {0x370, 0, 6, .check_relay = false},  // pt bus
@@ -196,10 +195,14 @@ static safety_config gm_init(uint16_t param) {
 
 
   static const LongitudinalLimits GM_CAM_LONG_LIMITS = {
+    // Powertrain torque limits, converted from Nm to CAN counts.
     .max_gas = 1346 * GM_GAS_TO_CAN,
     .min_gas = -540 * GM_GAS_TO_CAN,
     .inactive_gas = -500 * GM_GAS_TO_CAN,
-    .max_brake = 400,
+    // Brake controller acceleration limits, 0.01 m/s^2 per count.
+    .min_accel = -400,  // Maximum requested deceleration.
+    .max_accel = 200,   // Positive requests can reduce braking to allow downhill acceleration.
+    .inactive_accel = 0,
   };
 
 #ifdef ALLOW_DEBUG
