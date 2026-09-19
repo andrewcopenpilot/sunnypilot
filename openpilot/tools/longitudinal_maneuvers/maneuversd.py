@@ -511,7 +511,68 @@ class SignedBrakeManeuver(BrakeCharacterizationManeuver):
     return self._end('profile complete')
 
 
+
+@dataclass
+class CreepSignedBrakeManeuver(SignedBrakeManeuver):
+  """Ramp braking to a speed crossing, then run timed signed requests."""
+  creep_speed: float = 1.5 * CV.MPH_TO_MS
+  start_counts: float = 5.
+  counts_per_second: float = 1.
+  acquisition_timeout: float = 20.
+  _acquisition_frames: int = 0
+  _target_reached: bool = False
+  _measured_speed: float = RECOVERY_SPEED
+
+  def __post_init__(self):
+    start_counts = self.start_counts
+    super().__post_init__()
+    assert BRAKE_TEST_MIN_SPEED < self.creep_speed < self.initial_speed < BRAKE_TEST_MAX_SPEED
+    assert 0. <= start_counts <= self.max_counts <= BRAKE_TEST_MAX
+    assert 0. < self.counts_per_second <= 1.
+    assert 0. < self.acquisition_timeout <= 30.
+    self.start_counts = start_counts
+    self._brake_counts = start_counts
+
+  @property
+  def duration(self):
+    return self.acquisition_timeout + super().duration
+
+  def _step(self):
+    if not self._target_reached:
+      if self._measured_speed <= self.creep_speed:
+        self._target_reached = True
+      else:
+        elapsed = self._acquisition_frames * DT_MDL
+        if elapsed >= self.acquisition_timeout:
+          return self._end('creep speed not reached')
+        self._acquisition_frames += 1
+        self._brake_counts = min(self.start_counts + elapsed * self.counts_per_second, self.max_counts)
+        return 0.
+    return super()._step()
+
+  def get_accel(self, v_ego, long_active, standstill, cruise_standstill, gas_pressed=False, /):
+    self._measured_speed = v_ego
+    return super().get_accel(v_ego, long_active, standstill, cruise_standstill, gas_pressed)
+
+  def reset(self):
+    super().reset()
+    self._acquisition_frames = 0
+    self._target_reached = False
+    self._measured_speed = self.initial_speed
+
+
 def signed_brake_maneuvers():
+  maneuvers = []
+  for index, level in enumerate((3., 6., 10., 15., 20., 200.), 1):
+    requests = ((0., 1.), (level, 4.), (0., 4.))
+    description = f'brake characterization: C{index:02d}, signed 0xA: ramp -5 to -20 at 1 count/s until 1.5 mph; '
+    description += f'0 (1s) -> +{level:g} (4s) -> 0 (4s)'
+    maneuvers.append(CreepSignedBrakeManeuver(description, [], repeat=1, initial_speed=RECOVERY_SPEED,
+                                              request_steps=requests))
+  return maneuvers
+
+
+def fixed_signed_brake_maneuvers():
   # Short application holds leave speed available for the positive-request phase.
   levels = (15., 18., 20.)
   maneuvers = []
@@ -637,6 +698,7 @@ BRAKE_RELEASE_MANEUVERS = brake_release_maneuvers()
 # Active zero retained pressure. Compare releasing the brake-active request at zero.
 BRAKE_CHARACTERIZATION_MANEUVERS = brake_exit_maneuvers()
 CREEP_SPEED_MANEUVERS = creep_speed_maneuvers()
+FIXED_SIGNED_BRAKE_MANEUVERS = fixed_signed_brake_maneuvers()
 SIGNED_BRAKE_MANEUVERS = signed_brake_maneuvers()
 MANEUVERS = SIGNED_BRAKE_MANEUVERS
 

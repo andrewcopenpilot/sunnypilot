@@ -6,28 +6,35 @@ Test your vehicle's longitudinal control tuning with this tool. The tool will te
 
 ## Current Volt default: signed EBCM acceleration requests
 
-`SIGNED_BRAKE_MANEUVERS` runs three profiles twice each (six attempts), all in
+`SIGNED_BRAKE_MANEUVERS` runs six profiles twice each (12 attempts), all in
 **0xA**. The sign below is the actual CAN sign: negative requests deceleration,
-positive requests acceleration. These are protocol counts, not measured pressure
-or a demonstrated physical acceleration increment. The experiment measures the
-EBCM's response; it does not assume positive demand must release all pressure.
+positive requests acceleration. These are protocol counts, not pressure commands.
 
-Each attempt settles at 3 mph for two seconds, sends -5 counts for two seconds,
-then follows one row. Intermediate phases are timed, with no stability gate.
-Gas/regen stays at -650 Nm throughout measurement. Production acceleration PI,
-brake scaling and brake/torque selection are bypassed during direct commands.
+Each attempt settles at 3 mph for two seconds, then ramps from **−5 toward −20**
+at **one count per second**. On reaching **1.5 mph**, it immediately sends zero
+for one second, the selected positive request for four seconds, and zero for
+four seconds. No stable-creep or acceleration-response gate delays those holds.
 
-| ID | Signed request sequence | Measurement duration, including -5 baseline |
-|---|---|---:|
-| S01 | -15 (4 s) → 0 (3 s) → +15 (4 s) → 0 (4 s) | 17 s |
-| S02 | -18 (4 s) → 0 (3 s) → +18 (4 s) → 0 (4 s) | 17 s |
-| S03 | -20 (4 s) → 0 (3 s) → +20 (4 s) → 0 (4 s) | 17 s |
+| ID | After crossing 1.5 mph |
+|---|---|
+| C01 | 0 (1 s) → +3 (4 s) → 0 (4 s) |
+| C02 | 0 (1 s) → +6 (4 s) → 0 (4 s) |
+| C03 | 0 (1 s) → +10 (4 s) → 0 (4 s) |
+| C04 | 0 (1 s) → +15 (4 s) → 0 (4 s) |
+| C05 | 0 (1 s) → +20 (4 s) → 0 (4 s) |
+| C06 | 0 (1 s) → +200 (4 s) → 0 (4 s) |
 
-Total measured time is 102 seconds, plus setup, stopping, acknowledgement and
-recovery. Existing direct-test guards remain: 0.4–2.0 m/s, no standstill, valid
-CAN and commands no older than 250 ms. Endpoint stopping and the throttle-tap
-acknowledgement are unchanged. Accelerator interruption restarts the unfinished
-attempt. Only the selected suite runs; previous suites are preserved below.
+The ramp is capped at −20 and times out after **20 seconds** if the target speed
+is not reached; that attempt ends without running the positive step. Each attempt
+therefore takes at most **29 seconds of direct commands**, plus setup, stopping,
+acknowledgement and recovery. A positive request with no visible response still
+finishes after four seconds. +200 uses the same timing and guards as every other level.
+
+Gas/regen stays at −650 Nm throughout direct measurement. Existing direct-test
+guards remain: 0.4–2.0 m/s, no standstill, valid CAN and commands no older than
+250 ms. Endpoint stopping and the throttle-tap acknowledgement are unchanged.
+Accelerator interruption restarts acquisition. Only this suite runs; the previous
+±15/18/20 profiles are preserved as `FIXED_SIGNED_BRAKE_MANEUVERS`.
 
 Enable `LongitudinalManeuverMode` as before and start a new drive. The signed
 experiment additionally needs the matching rebuilt Panda firmware. This prebuilt
@@ -42,7 +49,7 @@ actuation permission. There is no test-specific, EV, or ASCM gate.
 The existing transmit allowlists are unchanged: configurations without
 brake-message transmit permission still cannot send it.
 Direct-command generation still requires Volt maneuver mode in the host; its
-speed/freshness guards remain active. The characterization range is **−20 to +20 signed counts**. Normal driving
+speed/freshness guards remain active. The characterization range is **−20 to +200 signed counts**. Normal driving
 control is unchanged and does not yet generate positive EBCM requests.
 
 The separate chassis interceptor must also have the signed-request update
@@ -220,7 +227,8 @@ separately and exclude fallback stopping commands after a guard triggers.
 
 To select a suite, set `MANEUVERS` to:
 
-- `SIGNED_BRAKE_MANEUVERS`: the current signed-request experiment, three profiles, two runs each.
+- `SIGNED_BRAKE_MANEUVERS`: the current speed-triggered signed-request experiment, six profiles, two runs each.
+- `FIXED_SIGNED_BRAKE_MANEUVERS`: previous timed ±15/18/20 profiles, two runs each.
 - `CREEP_SPEED_MANEUVERS`: the preserved six speed-tracking profiles, two runs each.
 - `BRAKE_CHARACTERIZATION_MANEUVERS`: the six zero-demand brake-exit profiles, two runs each.
 
