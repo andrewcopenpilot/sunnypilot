@@ -84,8 +84,8 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   # existing callers; moving-creep control can retain the brake path with a zero request.
   if apply_brake > 0 or (enabled and brake_active):
     mode = 0xa
-    if near_stop:
-      mode = 0xb
+    #if near_stop:
+    #  mode = 0xb
     if at_full_stop:
       mode = 0xd
 
