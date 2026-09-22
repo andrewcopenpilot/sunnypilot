@@ -1,0 +1,13 @@
+{
+  "calibration": "23366550.bin",
+  "sha256": "de42f846cf8852e987af67f453ce98cf75835d63ffbdab677cbc9d847c497030",
+  "dt_ms": 40,
+  "scalar_raw": {
+    "0x620": 10000,
+    "0x6dc": -4000,
+    "0x6d0": 2000,
+    "0x6d4": 3000,
+    "0x6d8": -1500
+  },
+  "example_scope": "Scalar ramp only; supplied target, fixed speed, continuing brake branch, no feedback or vehicle dynamics."
+}

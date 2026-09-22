@@ -152,3 +152,7 @@ The native comparison checks are against recovered C, not CPU emulation.
 
 See [the remaining-question review](ASCM_REMAINING_QUESTIONS.md) for the gap
 assessment after tracing the dynamics sources and extra-output consumers.
+
+See [ASCM_RAMPS.md](ASCM_RAMPS.md) for calibration plots and pseudocode showing
+how acceleration targets pass through allocation, slew limits and the final
+brake envelope, with downloadable SVG and CSV artifacts.
