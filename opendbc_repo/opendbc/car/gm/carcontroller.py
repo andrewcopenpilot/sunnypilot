@@ -42,7 +42,7 @@ class CarController(CarControllerBase):
 
     # two-owner longitudinal allocation (GMFlags.ASCM_LONG)
     self.owner = LongOwner.POWERTRAIN
-    self.pitch = FirstOrderFilter(0., self.params.PITCH_FILTER_RC, DT_CTRL)
+    self.pitch = FirstOrderFilter(0., self.params.PITCH_FILTER_RC, 4 * DT_CTRL)  # allocate_long runs at 25 Hz
     self.brake_test_failed = False
 
   def allocate_long(self, CC, CS, stopping, accel=None):

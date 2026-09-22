@@ -90,6 +90,17 @@ class TestAllocateLong(unittest.TestCase):
     self.assertEqual(self.controller.owner, LongOwner.POWERTRAIN)
     self.assertEqual(brake, 0)
 
+  def test_grade_filter_settles_at_its_time_constant(self):
+    # The filter runs at the 25 Hz allocation rate: a 0.5 s time constant means 63% of a pitch step after
+    # 0.5 s (12-13 calls) and 95% after 1.5 s, not the 2 s a 100 Hz-configured filter would take.
+    pitch = math.atan(0.05)
+    for _ in range(13):
+      self.allocate(0.5, pitch=pitch)
+    self.assertAlmostEqual(self.controller.pitch.x / pitch, 1 - math.exp(-13 * 0.04 / 0.5), delta=0.05)
+    for _ in range(25):
+      self.allocate(0.5, pitch=pitch)
+    self.assertGreater(self.controller.pitch.x / pitch, 0.94)
+
   def test_uphill_feedforward_carries_the_grade(self):
     p = self.controller.params
     pitch = math.atan(0.05)

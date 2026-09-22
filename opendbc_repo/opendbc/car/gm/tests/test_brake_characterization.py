@@ -91,7 +91,8 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
         self.state.out.standstill = False
         for _ in range(10):
           mode, demand = self.update(0.)
-        self.assertEqual((mode, demand), (0xb, -150.))
+        # a latched abort keeps requesting the -2.0 m/s^2 stop through the brake controller
+        self.assertEqual((mode, demand), (0xa, -200.))
 
   def test_stale_invalid_and_out_of_bounds_commands_stop(self):
     for case in ('stale', 'future', 'nan', 'negative', 'large', 'slow', 'fast', 'standstill', 'cruise_stop', 'invalid_can', 'stopping'):
