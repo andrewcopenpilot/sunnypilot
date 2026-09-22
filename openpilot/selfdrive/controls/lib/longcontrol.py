@@ -7,14 +7,6 @@ from openpilot.common.pid import PIDController
 from openpilot.selfdrive.modeld.constants import ModelConstants
 
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
-LONG_KP = 0.1  # 2017 Volt ASCM interceptor, stock-like (stock schedules 0.02-0.2); the CarParams schema has no kp field.
-# Stock ASCM computes its accel error against the planner accel delayed 120 ms and low-pass filtered
-# (~100 ms), which lines the reference up with the powertrain response so the PI only sees real
-# tracking error. Applied for the Volt only; the feedforward stays undelayed as in stock.
-VOLT_REF_DELAY_FRAMES = 12   # 120 ms at 100 Hz
-VOLT_REF_FILTER_TAU = 0.1    # s
-# 0.3 (2026-09-06 01:25) vs 0.2 (01:53): 0.2 gained nothing on friction-step overshoot (delay-limited) and cost
-# tracking and ramp lag, so 0.3 stays.
 
 LongCtrlState = car.CarControl.Actuators.LongControlState
 
@@ -53,28 +45,12 @@ class LongControl:
     self.CP = CP
     self.CP_SP = CP_SP
     self.long_control_state = LongCtrlState.off
-    # Effective kp is recoverable from the logs as controlsState.upAccelCmd / (aTarget - aEgo).
-    self.pid = PIDController(LONG_KP, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
+    self.pid = PIDController(0.0, (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
-    self.stock_ref = (self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.openpilotLongitudinalControl)
-    self.ref_hist = [0.0] * VOLT_REF_DELAY_FRAMES
-    self.ref_filt = 0.0
 
   def reset(self):
     self.pid.reset()
-    self.ref_hist = [0.0] * VOLT_REF_DELAY_FRAMES
-    self.ref_filt = 0.0
-
-  def reference(self, a_target):
-    """Accel reference for the error term: stock-style delayed + filtered target on the Volt, else a_target."""
-    if not self.stock_ref:
-      return a_target
-    self.ref_hist.append(a_target)
-    delayed = self.ref_hist.pop(0)
-    alpha = DT_CTRL / (VOLT_REF_FILTER_TAU + DT_CTRL)
-    self.ref_filt += alpha * (delayed - self.ref_filt)
-    return self.ref_filt
 
   def update(self, active, CS, a_target, should_stop, accel_limits):
     """Update longitudinal control. This updates the state machine and runs a PID loop"""
@@ -100,7 +76,7 @@ class LongControl:
       self.reset()
 
     else:  # LongCtrlState.pid
-      error = self.reference(a_target) - CS.aEgo
+      error = a_target - CS.aEgo
       output_accel = self.pid.update(error, speed=CS.vEgo,
                                      feedforward=a_target)
 

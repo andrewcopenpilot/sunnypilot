@@ -1,11 +1,13 @@
+import math
 import numpy as np
 from opendbc.can import CANPacker
-from opendbc.car import Bus, DT_CTRL, structs
+from opendbc.car import Bus, DT_CTRL, structs, ACCELERATION_DUE_TO_GRAVITY
 from opendbc.car.lateral import apply_driver_steer_torque_limits
+from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.gm import gmcan
 from opendbc.car.gm.brake_characterization import brake_test_enabled, brake_test_valid
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import CAR, DBC, CanBus, CarControllerParams, CruiseButtons
+from opendbc.car.gm.values import CAR, DBC, CanBus, CarControllerParams, CruiseButtons, LongOwner
 from opendbc.car.interfaces import CarControllerBase
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -38,46 +40,45 @@ class CarController(CarControllerBase):
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint][Bus.chassis])
 
-    # stock ASCM longitudinal state
-    self.brake_mode = False       # False: torque mode (stock mode 1), True: friction-brake mode (stock mode 2)
-    self.brake_accel_cmd = 0.     # rate-limited brake-path accel command, m/s^2
-    self.gas_cmd = 0.             # rate-limited torque-mode GasRegenCmd, Nm
+    # two-owner longitudinal allocation (GMFlags.ASCM_LONG)
+    self.owner = LongOwner.POWERTRAIN
+    self.pitch = FirstOrderFilter(0., self.params.PITCH_FILTER_RC, DT_CTRL)
     self.brake_test_failed = False
 
-  def stock_gas_brake(self, accel, CS, stopping):
-    """Gas (Nm) and brake (counts) the way the stock ASCM derives them from an accel target.
-    Mirrors FUN_0013afc0 (mode select), FUN_0013a360 (torque path) and FUN_00131440 (brake path)."""
+  def allocate_long(self, CC, CS, stopping, accel=None):
+    """Gas (Nm) and brake (counts): give the accel request to either the powertrain or the brake controller
+    (see GMFlags.ASCM_LONG in values.py). accel overrides CC.actuators.accel."""
     p = self.params
     v = CS.out.vEgo
-    dt = 4 * DT_CTRL  # 25 Hz
+    if accel is None:
+      accel = CC.actuators.accel
 
-    # regen the ACC path can deliver right now, from the HPCM's live limit (0x1C5)
+    # Grade from the device localizer (north-east-down frame: nose down is negative). On a downhill gravity
+    # supplies part of the requested acceleration, so the actuators only need to produce the rest.
+    if len(CC.orientationNED) == 3:
+      self.pitch.update(CC.orientationNED[1])
+    net = accel + math.sin(self.pitch.x) * ACCELERATION_DUE_TO_GRAVITY
+
+    # regen the gas/regen path can deliver right now, from the powertrain's reported limit (0x1C5)
     t_min = CS.axle_torque_min if CS.axle_torque_min_valid else p.MAX_ACC_REGEN
     a_regen = p.regen_accel_available(t_min, v)
 
-    # mode select with hysteresis; stock is always in brake mode through a stop
-    margin = float(np.interp(v, p.BRAKE_ENTRY_MARGIN_BP, p.BRAKE_ENTRY_MARGIN_V))
-    thresh = a_regen + margin + (p.BRAKE_ENTRY_HYST if self.brake_mode else 0.)
-    self.brake_mode = accel < thresh or stopping
+    # owner select with hysteresis; the brake controller keeps the request through a stop
+    if stopping or net < a_regen + p.BRAKE_ENTRY_MARGIN:
+      self.owner = LongOwner.BRAKE
+    elif net > a_regen + p.BRAKE_RELEASE_MARGIN:
+      self.owner = LongOwner.POWERTRAIN
 
-    if not self.brake_mode:
-      # torque mode: physics feedforward on the gas/regen path, rate limited as stock, brakes idle
-      target = float(np.clip(p.torque_ff(accel, v), p.MAX_ACC_REGEN, p.MAX_GAS))
-      up = float(np.interp(v, p.GAS_RATE_UP_BP, p.GAS_RATE_UP_V)) * dt
-      self.gas_cmd = float(np.clip(target, self.gas_cmd - p.GAS_RATE_DOWN * dt, self.gas_cmd + up))
-      self.brake_accel_cmd = 0.
-      return self.gas_cmd, 0
+    if self.owner == LongOwner.POWERTRAIN:
+      # physics feedforward on the gas/regen path, brake controller idle
+      gas = float(np.clip(p.torque_ff(net, v), p.MAX_ACC_REGEN, p.MAX_GAS))
+      return gas, 0
 
-    # brake mode: fixed max ACC regen request (stock cal 0x834), whole decel target on the brake path
-    self.gas_cmd = p.MAX_ACC_REGEN
-    # The EBCM request is signed acceleration. Between the entry and release thresholds braking is
-    # retained and the request may go positive to release it; zero counts in 0xA hold speed against creep.
-    target = min(accel, 0.) if stopping or CS.out.standstill or CS.out.cruiseState.standstill else accel
-    target = max(target, float(np.interp(v, p.STOCK_DECEL_FLOOR_BP, p.STOCK_DECEL_FLOOR_V)), p.ACCEL_MIN)
-    step = p.BRAKE_JERK_LIMIT * dt
-    self.brake_accel_cmd = float(np.clip(target, self.brake_accel_cmd - step, self.brake_accel_cmd + step))
-    brake = int(round(-self.brake_accel_cmd * p.BRAKE_COUNTS_PER_MPS2))
-    return self.gas_cmd, min(brake, p.MAX_BRAKE)
+    # brake controller: gas pinned at max ACC regen, the whole net effort as a signed request. It may go
+    # positive to release retained braking; stopping and standstill keep it non-positive.
+    target = min(net, 0.) if stopping or CS.out.standstill or CS.out.cruiseState.standstill else net
+    brake = int(round(-max(target, p.ACCEL_MIN) * p.BRAKE_COUNTS_PER_MPS2))
+    return p.MAX_ACC_REGEN, min(brake, p.MAX_BRAKE)
 
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
@@ -127,7 +128,6 @@ class CarController(CarControllerBase):
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
-        brake_test_running = False
         test_requested = CC.enabled and CC.brakeTestActive and brake_test_enabled(self.CP, self.CP_SP)
         if not test_requested or not CC.longActive or CS.out.gasPressed or CS.out.brakePressed:
           self.brake_test_failed = False
@@ -135,37 +135,34 @@ class CarController(CarControllerBase):
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = 0
-          self.brake_mode = False
-          self.brake_accel_cmd = 0.
+          self.owner = LongOwner.POWERTRAIN
         elif test_requested:
           if (not self.brake_test_failed and not stopping and
               brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out, CC.brakeTestRelease)):
             # Characterize the EBCM with fixed gas/regen and direct counts. Bypass PI
-            # mapping, creep scaling and mode selection only for this explicit test.
-            brake_test_running = True
-            self.brake_mode = not CC.brakeTestRelease
-            self.gas_cmd = self.apply_gas = self.params.MAX_ACC_REGEN
+            # mapping and owner selection only for this explicit test.
+            self.owner = LongOwner.POWERTRAIN if CC.brakeTestRelease else LongOwner.BRAKE
+            self.apply_gas = self.params.MAX_ACC_REGEN
             self.apply_brake = int(round(CC.brakeTestCommand))
-            self.brake_accel_cmd = -self.apply_brake / self.params.BRAKE_COUNTS_PER_MPS2
           else:
             # A stale/invalid test must not continue a held command or resume into torque.
             self.brake_test_failed = True
             stopping = True
-            self.apply_gas, self.apply_brake = self.stock_gas_brake(-2., CS, True)
+            self.apply_gas, self.apply_brake = self.allocate_long(CC, CS, True, accel=-2.)
+        elif self.params.ASCM_LONG:
+          # two-owner allocation (see CarControllerParams)
+          self.apply_gas, self.apply_brake = self.allocate_long(CC, CS, stopping)
         else:
-          # stock ASCM two-mode logic (see CarControllerParams)
-          self.apply_gas, self.apply_brake = self.stock_gas_brake(actuators.accel, CS, stopping)
+          self.apply_gas = float(np.interp(actuators.accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V))
+          self.apply_brake = int(round(np.interp(actuators.accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+          # Don't allow any gas above inactive regen while stopping
+          if stopping:
+            self.apply_gas = self.params.INACTIVE_REGEN
 
         idx = (self.frame // 4) % 4
 
         at_full_stop = CC.longActive and CS.out.standstill
-        # Measure ordinary braking (0xA): the 0xB baseline built pressure at zero demand.
-        # Direct characterization bypasses near-stop; aborts still request stopping.
-        near_stop = (CC.longActive and self.brake_mode and not brake_test_running and
-                     abs(CS.out.vEgo) < self.params.NEAR_STOP_SPEED)
-        if self.CP.carFingerprint == CAR.CHEVROLET_VOLT and self.CP.networkLocation == NetworkLocation.gateway:
-          # Low speed alone must not invoke the stop submode: moving braking needs ordinary 0xA.
-          near_stop = near_stop and stopping
+        near_stop = CC.longActive and (abs(CS.out.vEgo) < self.params.NEAR_STOP_BRAKE_PHASE)
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
         # TODO: can we always check the longControlState?
@@ -188,7 +185,7 @@ class CarController(CarControllerBase):
                                                        idx, gas_regen_active, at_full_stop))
         can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
                                                              idx, CC.enabled, near_stop, at_full_stop, self.CP,
-                                                             brake_active=CC.longActive and self.brake_mode))
+                                                             brake_active=CC.longActive and self.owner == LongOwner.BRAKE))
 
         # Send dashboard UI commands (ACC status)
         send_fcw = hud_alert == VisualAlert.fcw

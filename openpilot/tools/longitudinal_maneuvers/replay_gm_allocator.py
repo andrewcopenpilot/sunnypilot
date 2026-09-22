@@ -20,13 +20,13 @@ from types import SimpleNamespace
 
 from opendbc.car import structs
 from opendbc.car.gm.carcontroller import CarController
-from opendbc.car.gm.values import DBC, CanBus
+from opendbc.car.gm.values import DBC, CanBus, LongOwner
 from openpilot.tools.lib.logreader import LogReader
 
 AXLE_TORQUE_LIMITS = 0x1C5
 BRAKE_COMMAND = 0x315
 COLUMNS = ("t", "v_ego", "a_ego", "long_active", "stopping", "brake_test", "axle_torque_min", "accel", "brake_mode",
-           "brake_accel_cmd", "gas", "brake", "mode", "logged_gas", "logged_brake", "logged_mode")
+           "gas", "brake", "mode", "logged_gas", "logged_brake", "logged_mode")
 
 
 def brake_command(messages, bus):
@@ -56,8 +56,8 @@ class Replay:
     self.pending = {
       "t": t, "v_ego": CS.out.vEgo, "a_ego": CS.out.aEgo, "long_active": CC.longActive,
       "stopping": CC.actuators.longControlState == "stopping", "brake_test": CC.brakeTestActive,
-      "axle_torque_min": CS.axle_torque_min, "accel": CC.actuators.accel, "brake_mode": self.controller.brake_mode,
-      "brake_accel_cmd": self.controller.brake_accel_cmd, "gas": actuators.gas, "brake": actuators.brake,
+      "axle_torque_min": CS.axle_torque_min, "accel": CC.actuators.accel,
+      "brake_mode": self.controller.owner == LongOwner.BRAKE, "gas": actuators.gas, "brake": actuators.brake,
       "mode": command[0] if command else "",
     }
 
@@ -137,7 +137,7 @@ def main():
   parser.add_argument("--csv", help="write every 25 Hz replay row")
   parser.add_argument("--transitions", action="store_true", help="print ownership and CAN mode changes")
   parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
-                      help="override a CarControllerParams field, e.g. --set BRAKE_ENTRY_HYST=0.05")
+                      help="override a CarControllerParams field, e.g. --set BRAKE_RELEASE_MARGIN=0.1")
   args = parser.parse_args()
 
   overrides = {name: ast.literal_eval(value) for name, value in (item.split("=", 1) for item in args.set)}

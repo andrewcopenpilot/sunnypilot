@@ -3,7 +3,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, SDGM_CAR, ALT_ACCS
+from opendbc.car.gm.values import DBC, AccState, CruiseButtons, STEER_THRESHOLD, SDGM_CAR, ALT_ACCS, GMFlags
 
 from opendbc.sunnypilot.car.gm.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.gm.values_ext import GMFlagsSP
@@ -35,6 +35,12 @@ class CarState(CarStateBase, CarStateExt):
 
     self.distance_button = 0
 
+    # powertrain axle torque limits (0x1C5), GMFlags.ASCM_LONG only
+    self.axle_torque = 0.
+    self.axle_torque_min = 0.
+    self.axle_torque_max = 0.
+    self.axle_torque_min_valid = False
+
   def update_button_enable(self, buttonEvents: list[structs.CarState.ButtonEvent]):
     if not self.CP.pcmCruise:
       for b in buttonEvents:
@@ -59,12 +65,14 @@ class CarState(CarStateBase, CarStateExt):
     self.buttons_counter = pt_cp.vl["ASCMSteeringButton"]["RollingCounter"]
     self.pscm_status = copy.copy(pt_cp.vl["PSCMStatus"])
 
-    # HPCM axle torque limits (0x1C5, 40 Hz). AxleTorqueMin is the regen torque the ACC gas/regen path can
-    # deliver right now; the stock ASCM uses it to decide when to hand braking to the EBCM.
-    self.axle_torque = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueActual"]
-    self.axle_torque_min = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueMin"]
-    self.axle_torque_max = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueMax"]
-    self.axle_torque_min_valid = self.axle_torque_min < 30000  # raw 0xFFFF = invalid
+    if self.CP.flags & GMFlags.ASCM_LONG:
+      # Powertrain axle torque limits (0x1C5, 40 Hz; sent by the HPCM on the Volt). AxleTorqueMin is the most
+      # negative torque the gas/regen path can deliver right now, which decides when the request is handed
+      # to the brake controller.
+      self.axle_torque = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueActual"]
+      self.axle_torque_min = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueMin"]
+      self.axle_torque_max = pt_cp.vl["HPCMAxleTorqueLimits"]["AxleTorqueMax"]
+      self.axle_torque_min_valid = self.axle_torque_min < 30000  # raw 0xFFFF = invalid
 
     # Variables used for avoiding LKAS faults
     self.loopback_lka_steering_cmd_updated = len(loopback_cp.vl_all["ASCMLKASteeringCmd"]["RollingCounter"]) > 0
@@ -175,9 +183,11 @@ class CarState(CarStateBase, CarStateExt):
 
   @staticmethod
   def get_can_parsers(CP, CP_SP):
-    pt_messages = [
-      ("HPCMAxleTorqueLimits", 40),
-    ]
+    pt_messages = []
+    if CP.flags & GMFlags.ASCM_LONG:
+      pt_messages += [
+        ("HPCMAxleTorqueLimits", 40),
+      ]
     if CP.networkLocation == NetworkLocation.fwdCamera:
       pt_messages += [
         ("ASCMLKASteeringCmd", float('nan')),

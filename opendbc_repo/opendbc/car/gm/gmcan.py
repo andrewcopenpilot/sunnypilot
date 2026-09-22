@@ -78,10 +78,9 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   if enabled and CP.carFingerprint in (CAR.CHEVROLET_BOLT_EUV,):
     mode = 0x9
 
-  # Stock ASCM (Volt, decompiled): bit 3 = brake path active, low 3 bits = 1 idle, 2 braking,
-  # 3 near stop (braking below 1.5 m/s), 5 standstill. So 0x1 / 0xA / 0xB / 0xD.
-  # The OEM brake-active flag is independent of numeric brake demand. Keep the default for
-  # existing callers; moving-creep control can retain the brake path with a zero request.
+  # FrictionBrakeMode: bit 3 = brake path active, low 3 bits = 1 idle, 2 braking, 3 near stop, 5 standstill.
+  # So 0x1 / 0xA / 0xB / 0xD. The brake-active bit is independent of the numeric request: with it set, a
+  # zero request holds the pressure already applied and a slightly positive (signed) request releases it.
   if apply_brake > 0 or (enabled and brake_active):
     mode = 0xa
     #if near_stop:

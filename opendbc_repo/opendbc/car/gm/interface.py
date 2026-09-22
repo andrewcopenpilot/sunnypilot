@@ -145,10 +145,8 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
       ret.minEnableSpeed = 18 * CV.MPH_TO_MS
       ret.minSteerSpeed = 7 * CV.MPH_TO_MS
 
-      # Tuning (2017 Volt ASCM interceptor): stock ASCM accel-loop gains, decompiled from the
-      # Accessory cal (FUN_0013a5d0, tables 0x736/0x74e). Stock ki rises with speed, 0.225 /s
-      # below 5 m/s to 0.60 /s above 15 m/s; kp is 0.02-0.2 scheduled on magnitude (longcontrol.py
-      # LONG_KP holds a fixed 0.1, the schema has no kp field). Earlier POC values: kp 0.3, ki 1.2/0.8.
+      # Integral gain for the two-owner allocation (GMFlags.ASCM_LONG): the feedforward carries most of the
+      # request, so ki is low and rises with speed. Upstream's 2.4/1.5 schedule was tuned for the lookups.
       ret.longitudinalTuning.kiBP = [5., 15.]
       ret.longitudinalTuning.kiV = [0.3, 0.6]
 

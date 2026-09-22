@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from opendbc.car import structs
 from opendbc.car.gm.brake_characterization import brake_test_enabled, forward_brake_test
 from opendbc.car.gm.tests import test_longitudinal as fixtures
-from opendbc.car.gm.values import CAR
+from opendbc.car.gm.values import LongOwner, CAR
 
 
 class TestBrakeCharacterizationCAN(unittest.TestCase):
@@ -64,7 +64,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     for _ in range(200):
       self.assertEqual(self.update(0.), (0x1, 0.))
       self.assertEqual(self.controller.apply_gas, -650.)
-      self.assertFalse(self.controller.brake_mode)
+      self.assertEqual(self.controller.owner, LongOwner.POWERTRAIN)
     self.control.brakeTestRelease = False
     self.assertEqual(self.update(0.), (0xa, 0.))
 
@@ -120,8 +120,9 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
           self.control.actuators.longControlState = 'stopping'
         for _ in range(10):
           mode, demand = self.update(command, fresh=fresh)
-        self.assertEqual(mode, 0xa if case == 'fast' else 0xd if case == 'cruise_stop' else 0xb)
-        self.assertEqual(demand, -175. if case == 'fast' else -150.)
+        # An abort requests a -2.0 m/s^2 stop through the brake controller: 0xA, or 0xD once cruise reports standstill.
+        self.assertEqual(mode, 0xd if case == 'cruise_stop' else 0xa)
+        self.assertEqual(demand, -200.)
 
   def test_fault_stays_latched_when_fresh_commands_return(self):
     self.update(2.)
@@ -129,7 +130,7 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
     self.update(2., fresh=False)
     for _ in range(10):
       _, demand = self.update(2.)
-    self.assertEqual(demand, -150.)
+    self.assertEqual(demand, -200.)
     self.assertTrue(self.controller.brake_test_failed)
     self.controller.frame = self.tick * 4
     output, _ = self.controller.update(self.control.as_reader(), None, self.state, 1_000_000_000 + self.tick * 40_000_000)
@@ -152,8 +153,9 @@ class TestBrakeCharacterizationCAN(unittest.TestCase):
       self.assertEqual(self.update(20.), (0x1, 0.))
 
   def test_requires_authorized_vehicle_and_mode(self):
+    # Unsupported vehicles keep their normal allocation (the Malibu uses the lookup tables: 21 counts at -0.3 m/s^2).
     for controller, expected in ((fixtures.make_controller(), 30.),
-                                 (fixtures.make_controller(CAR.CHEVROLET_MALIBU), 30.)):
+                                 (fixtures.make_controller(CAR.CHEVROLET_MALIBU), 21.)):
       self.setUp()
       self.controller = controller
       # Unsupported vehicles remain unsupported even with maneuver mode selected.
