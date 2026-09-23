@@ -171,10 +171,47 @@ class TestVoltCreepCAN(unittest.TestCase):
     self.update(-0.3)
     self.assertEqual(self.update(0.1), (0xa, 10.))
     self.control.actuators.longControlState = "stopping"
-    self.assertEqual(self.update(0.1), (0xa, 0.))
-    self.assertEqual(self.update(-0.3), (0xa, -30.))
+    self.assertEqual(self.update(0.1), (0xb, 0.))
+    self.assertEqual(self.update(-0.3), (0xb, -30.))
     self.control.actuators.longControlState = "pid"
     self.assertEqual(self.update(-0.3)[0], 0xa)
+
+  def test_stop_submodes_in_order_and_exit_through_ordinary_braking(self):
+    # slowing: 0xA; planner commits to the stop: 0xB; car reports standstill: 0xD
+    self.assertEqual(self.update(-0.5)[0], 0xa)
+    self.control.actuators.longControlState = "stopping"
+    self.assertEqual(self.update(-1.0), (0xb, -100.))
+    self.state.out.standstill = self.state.out.cruiseState.standstill = True
+    self.assertEqual(self.update(-2.0), (0xd, -200.))
+    # rolling again but still stopping: back to 0xB
+    self.state.out.standstill = self.state.out.cruiseState.standstill = False
+    self.assertEqual(self.update(-2.0)[0], 0xb)
+    # planner wants to move: one cycle of 0xA carrying the positive (releasing) request, then idle
+    self.control.actuators.longControlState = "pid"
+    self.assertEqual(self.update(0.5), (0xa, 50.))
+    self.assertEqual(self.controller.apply_gas, -650.)
+    mode, demand = self.update(0.5)
+    self.assertEqual((mode, demand), (0x1, 0.))
+    self.assertGreater(self.controller.apply_gas, 0.)
+
+  def test_standstill_resume_goes_straight_to_idle(self):
+    self.control.actuators.longControlState = "stopping"
+    self.state.out.standstill = self.state.out.cruiseState.standstill = True
+    self.assertEqual(self.update(-2.0)[0], 0xd)
+    # openpilot leaves stopping a frame before the car reports motion: still 0xD, no 0xA interposed
+    self.control.actuators.longControlState = "pid"
+    self.assertEqual(self.update(0.5)[0], 0xd)
+    self.state.out.standstill = self.state.out.cruiseState.standstill = False
+    self.assertEqual(self.update(0.5)[0], 0x1)
+
+  def test_disengage_during_stop_clears_the_interlock(self):
+    self.control.actuators.longControlState = "stopping"
+    self.assertEqual(self.update(-1.0)[0], 0xb)
+    self.control.longActive = False
+    self.control.actuators.longControlState = "pid"
+    self.assertEqual(self.update(0.)[0], 0x1)
+    self.control.longActive = True
+    self.assertEqual(self.update(0.5)[0], 0x1)
 
   def test_other_platforms_keep_lookup_allocation(self):
     self.controller = make_controller(CAR.CHEVROLET_MALIBU)

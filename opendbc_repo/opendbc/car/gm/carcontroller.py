@@ -43,6 +43,7 @@ class CarController(CarControllerBase):
     # two-owner longitudinal allocation (GMFlags.ASCM_LONG)
     self.owner = LongOwner.POWERTRAIN
     self.pitch = FirstOrderFilter(0., self.params.PITCH_FILTER_RC, 4 * DT_CTRL)  # allocate_long runs at 25 Hz
+    self.stopping_last = False
     self.brake_test_failed = False
 
   def allocate_long(self, CC, CS, stopping, accel=None):
@@ -63,11 +64,13 @@ class CarController(CarControllerBase):
     t_min = CS.axle_torque_min if CS.axle_torque_min_valid else p.MAX_ACC_REGEN
     a_regen = p.regen_accel_available(t_min, v)
 
-    # owner select with hysteresis; the brake controller keeps the request through a stop
-    if stopping or net < a_regen + p.BRAKE_ENTRY_MARGIN:
+    # owner select with hysteresis; the brake controller keeps the request through a stop, and for one more
+    # cycle after it so a near-stop hold (0xB) leaves through ordinary braking (0xA) rather than straight to idle
+    if stopping or self.stopping_last or net < a_regen + p.BRAKE_ENTRY_MARGIN:
       self.owner = LongOwner.BRAKE
     elif net > a_regen + p.BRAKE_RELEASE_MARGIN:
       self.owner = LongOwner.POWERTRAIN
+    self.stopping_last = stopping
 
     if self.owner == LongOwner.POWERTRAIN:
       # physics feedforward on the gas/regen path, brake controller idle
@@ -136,6 +139,7 @@ class CarController(CarControllerBase):
           self.apply_gas = self.params.INACTIVE_REGEN
           self.apply_brake = 0
           self.owner = LongOwner.POWERTRAIN
+          self.stopping_last = False
         elif test_requested:
           if (not self.brake_test_failed and not stopping and
               brake_test_valid(CC.brakeTestCommand, CC.brakeTestMonoTime, now_nanos, CS.out, CC.brakeTestRelease)):
@@ -162,7 +166,9 @@ class CarController(CarControllerBase):
         idx = (self.frame // 4) % 4
 
         at_full_stop = CC.longActive and CS.out.standstill
-        near_stop = CC.longActive and (abs(CS.out.vEgo) < self.params.NEAR_STOP_BRAKE_PHASE)
+        # 0xB once openpilot has committed to the stop (the request is ramping to stopAccel); other platforms
+        # keep the friction brake message unchanged
+        near_stop = CC.longActive and stopping and self.params.ASCM_LONG
         friction_brake_bus = CanBus.OBSTACLE
         # GM Camera exceptions
         # TODO: can we always check the longControlState?

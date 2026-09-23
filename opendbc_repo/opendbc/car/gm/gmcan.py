@@ -83,8 +83,9 @@ def create_friction_brake_command(packer, bus, apply_brake, idx, enabled, near_s
   # zero request holds the pressure already applied and a slightly positive (signed) request releases it.
   if apply_brake > 0 or (enabled and brake_active):
     mode = 0xa
-    #if near_stop:
-    #  mode = 0xb
+    # near stop: the EBCM prepares the stop and hold. Set from the stopping state, not from speed.
+    if near_stop:
+      mode = 0xb
     if at_full_stop:
       mode = 0xd
 
